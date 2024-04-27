@@ -1,154 +1,226 @@
-"""The main BERT model and related functions."""
-
-import copy
 import torch
-from torch import nn
+import torch.nn as nn
+import torch.nn.functional as F
+import math
+import json
+from torch.nn.init import trunc_normal_
 
 class BertConfig(object):
-    """Configuration for `BertModel`."""
-        
-    def __init__(self,
-            hidden_size=768,
-            num_hidden_layers=12,
-            num_attention_heads=12,
-            intermediate_size=3072,
-            hidden_act="gelu",
-            hidden_dropout_prob=0.1,
-            attention_probs_dropout_prob=0.1,
-            max_position_embeddings=512,
-            initializer_range=0.02):
-        """Constructs BertConfig.
-
-        Args:
-        hidden_size: Size of the encoder layers and the pooler layer.
-        num_hidden_layers: Number of hidden layers in the Transformer encoder.
-        num_attention_heads: Number of attention heads for each attention layer in
-            the Transformer encoder.
-        intermediate_size: The size of the "intermediate" (i.e., feed-forward)
-            layer in the Transformer encoder.
-        hidden_act: The non-linear activation function (function or string) in the
-            encoder and pooler.
-        hidden_dropout_prob: The dropout probability for all fully connected
-            layers in the embeddings, encoder, and pooler.
-        attention_probs_dropout_prob: The dropout ratio for the attention
-            probabilities.
-        max_position_embeddings: The maximum sequence length that this model might
-            ever be used with. Typically set this to something large just in case
-            (e.g., 512 or 1024 or 2048).
-        initializer_range: The stdev of the truncated_normal_initializer for
-            initializing all weight matrices.
-        """
+    def __init__(self, 
+                 hidden_size=768, 
+                 num_hidden_layers=12, 
+                 num_attention_heads=12, 
+                 intermediate_size=3072, 
+                 hidden_act="gelu", 
+                 hidden_dropout_prob=0.1, 
+                 attention_probs_dropout_prob=0.1, max_position_embeddings=512, 
+                 initializer_range=0.02,
+                 vocab_size=32000):
         self.hidden_size = hidden_size
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
-        self.hidden_act = hidden_act
         self.intermediate_size = intermediate_size
+        self.hidden_act = hidden_act
         self.hidden_dropout_prob = hidden_dropout_prob
         self.attention_probs_dropout_prob = attention_probs_dropout_prob
         self.max_position_embeddings = max_position_embeddings
         self.initializer_range = initializer_range
-    
-    # from_dict()
-    # from_json_file()
-    # to_dict()
-    # to_json_string()
+        self.vocab_size = vocab_size
+
+    @classmethod
+    def from_dict(cls, json_object):
+        config = BertConfig()
+        for key, value in json_object.items():
+            config.__dict__[key] = value
+        return config
+
+    @classmethod
+    def from_json_file(cls, json_file):
+        with open(json_file, "r") as reader:
+            text = reader.read()
+        return cls.from_dict(json.loads(text))
+
+    def to_dict(self):
+        return copy.deepcopy(self.__dict__)
+
+    def to_json_string(self):
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
 class BertModel(nn.Module):
-    """BERT model ("Bidirectional Encoder Representations from Transformers").
+    def __init__(self, config):
+        super(BertModel, self).__init__()
+        self.embeddings = BertEmbeddings(config)
+        self.encoder = BertEncoder(config)
+        self.pooler = BertPooler(config)
 
-    Example usage (IN TENSORFLOW, FROM ORIGINAL PAPER; CHANGE):
+    def forward(self, input_ids, attention_mask=None, token_type_ids=None):
+        if attention_mask is None:
+            attention_mask = torch.ones_like(input_ids)
 
-    ```python
-    # Already been converted into WordPiece token ids
-    input_ids = tf.constant([[31, 51, 99], [15, 5, 0]])
-    input_mask = tf.constant([[1, 1, 1], [1, 1, 0]])
-    token_type_ids = tf.constant([[0, 0, 1], [0, 2, 0]])
+        if token_type_ids is None:
+            token_type_ids = torch.zeros_like(input_ids)
 
-    config = modeling.BertConfig(vocab_size=32000, hidden_size=512,
-        num_hidden_layers=8, num_attention_heads=6, intermediate_size=1024)
+        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+        extended_attention_mask = extended_attention_mask.to(dtype=torch.float32)
+        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
 
-    model = modeling.BertModel(config=config, is_training=True,
-        input_ids=input_ids, input_mask=input_mask, token_type_ids=token_type_ids)
+        embedding_output = self.embeddings(input_ids, token_type_ids)
+        encoder_outputs = self.encoder(embedding_output, extended_attention_mask)
+        sequence_output = encoder_outputs[-1]
+        pooled_output = self.pooler(sequence_output)
+        return sequence_output, pooled_output
 
-    label_embeddings = tf.get_variable(...)
-    pooled_output = model.get_pooled_output()
-    logits = tf.matmul(pooled_output, label_embeddings)
-    ...
-    ```
-    """
+def gelu(x):
+    return x * 0.5 * (1.0 + torch.erf(x / math.sqrt(2.0)))
 
-    def __init__(self,
-                 config,
-                 is_training,
-                 input_embeddings,
-                 input_mask):
-        """Constructor for BertModel.
+class BertEmbeddings(nn.Module):
+    def __init__(self, config):
+        super(BertEmbeddings, self).__init__()
+        self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
+        self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
+        self.token_type_embeddings = nn.Embedding(2, config.hidden_size)
 
-        Args:
-            config: `BertConfig` instance.
-            is_training: bool. true for training model, false for eval model. Controls
-                whether dropout will be applied.
-            input_ids: int32 Tensor of shape [batch_size, seq_length].
-            input_mask: (optional) int32 Tensor of shape [batch_size, seq_length].
-            token_type_ids: (optional) int32 Tensor of shape [batch_size, seq_length].
-            use_one_hot_embeddings: (optional) bool. Whether to use one-hot word
-                embeddings or tf.embedding_lookup() for the word embeddings.
+        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=1e-12)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-        Raises:
-            ValueError: The config is invalid or one of the input tensor shapes
-                is invalid.
-        """
-        super(BertModel, self).__init__() # This line from ChatGPT
-        config = copy.deepcopy(config)
-        if not is_training:
-            config.hidden_dropout_prob = 0.0
-            config.attention_probs_dropout_prob = 0.0
-        
-        self.embedding_output = embedding_postprocessor(
-            input_embeddings,
-            use_position_embeddings=True,
-            position_embedding_name="position_embeddings",
-            max_position_embeddings=config.max_position_embeddings,
-            dropout_prob=config.hidden_dropout_prob)
-        
-        attention_mask = create_attention_mask_from_input_mask(input_embeddings, input_mask)
+    def forward(self, input_ids, token_type_ids):
+        seq_length = input_ids.size(1)
+        position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
+        position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
 
-        self.all_encoder_layers = self.transformer_model(
-            self.embedding_output,
-            attention_mask,
-            hidden_size=config.hidden_size,
-            num_hidden_layers=config.num_hidden_layers,
-            num_attention_heads=config.num_attention_heads,
-            intermediate_size=config.intermediate_size,
-            intermediate_act_fn=self.get_activation(config.hidden_act),
-            hidden_dropout_prob=config.hidden_dropout_prob,
-            attention_probs_dropout_prob=config.attention_probs_dropout_prob,
-            initializer_range=config.initializer_range,
-            do_return_all_layers=True
-        )
+        words_embeddings = self.word_embeddings(input_ids)
+        position_embeddings = self.position_embeddings(position_ids)
+        token_type_embeddings = self.token_type_embeddings(token_type_ids)
 
-        self.all_encoder_layers = transformer_model(
-            input_tensor=self.embedding_output,
-            attention_mask=attention_mask,
-            hidden_size=config.hidden_size,
-            num_hidden_layers=config.num_hidden_layers,
-            num_attention_heads=config.num_attention_heads,
-            intermediate_size=config.intermediate_size,
-            intermediate_act_fn=get_activation(config.hidden_act),
-            hidden_dropout_prob=config.hidden_dropout_prob,
-            attention_probs_dropout_prob=config.attention_probs_dropout_prob,
-            initializer_range=config.initializer_range,
-            do_return_all_layers=True
-        )
-    
-def embedding_postprocessor():
-    pass
+        embeddings = words_embeddings + position_embeddings + token_type_embeddings
+        embeddings = self.LayerNorm(embeddings)
+        embeddings = self.dropout(embeddings)
+        return embeddings
 
-def create_attention_mask_from_input_mask():
-    pass
+class BertEncoder(nn.Module):
+    def __init__(self, config):
+        super(BertEncoder, self).__init__()
+        self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
 
-def transformer_model():
-    pass
+    def forward(self, hidden_states, attention_mask):
+        for layer_module in self.layer:
+            hidden_states = layer_module(hidden_states, attention_mask)
+        return hidden_states
 
-def get_activation():
-    pass
+class BertLayer(nn.Module):
+    def __init__(self, config):
+        super(BertLayer, self).__init__()
+        self.attention = BertAttention(config)
+        self.intermediate = BertIntermediate(config)
+        self.output = BertOutput(config)
+
+    def forward(self, hidden_states, attention_mask):
+        attention_output = self.attention(hidden_states, attention_mask)
+        intermediate_output = self.intermediate(attention_output)
+        layer_output = self.output(intermediate_output, attention_output)
+        return layer_output
+
+class BertAttention(nn.Module):
+    def __init__(self, config):
+        super(BertAttention, self).__init__()
+        self.self = BertSelfAttention(config)
+        self.output = BertSelfOutput(config)
+
+    def forward(self, hidden_states, attention_mask):
+        self_output = self.self(hidden_states, attention_mask)
+        attention_output = self.output(self_output, hidden_states)
+        return attention_output
+
+class BertSelfAttention(nn.Module):
+    def __init__(self, config):
+        super(BertSelfAttention, self).__init__()
+        self.num_attention_heads = config.num_attention_heads
+        self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
+        self.all_head_size = self.num_attention_heads * self.attention_head_size
+
+        self.query = nn.Linear(config.hidden_size, self.all_head_size)
+        self.key = nn.Linear(config.hidden_size, self.all_head_size)
+        self.value = nn.Linear(config.hidden_size, self.all_head_size)
+
+        self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
+
+    def transpose_for_scores(self, x):
+        new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
+        x = x.view(*new_x_shape)
+        return x.permute(0, 2, 1, 3)
+
+    def forward(self, hidden_states, attention_mask):
+        mixed_query_layer = self.query(hidden_states)
+        mixed_key_layer = self.key(hidden_states)
+        mixed_value_layer = self.value(hidden_states)
+
+        query_layer = self.transpose_for_scores(mixed_query_layer)
+        key_layer = self.transpose_for_scores(mixed_key_layer)
+        value_layer = self.transpose_for_scores(mixed_value_layer)
+
+        attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
+        attention_scores = attention_scores / math.sqrt(self.attention_head_size)
+        attention_scores = attention_scores + attention_mask
+
+        attention_probs = nn.Softmax(dim=-1)(attention_scores)
+        attention_probs = self.dropout(attention_probs)
+
+        context_layer = torch.matmul(attention_probs, value_layer)
+        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
+        new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
+        context_layer = context_layer.view(*new_context_layer_shape)
+        return context_layer
+
+class BertSelfOutput(nn.Module):
+    def __init__(self, config):
+        super(BertSelfOutput, self).__init__()
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=1e-12)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+    def forward(self, hidden_states, input_tensor):
+        hidden_states = self.dense(hidden_states)
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.LayerNorm(hidden_states + input_tensor)
+        return hidden_states
+
+class BertIntermediate(nn.Module):
+    def __init__(self, config):
+        super(BertIntermediate, self).__init__()
+        self.dense = nn.Linear(config.hidden_size, config.intermediate_size)
+        if config.hidden_act == "gelu":
+            self.intermediate_act_fn = gelu
+        else:
+            raise ValueError("Unsupported activation function: " + config.hidden_act)
+
+    def forward(self, hidden_states):
+        hidden_states = self.dense(hidden_states)
+        hidden_states = self.intermediate_act_fn(hidden_states)
+        return hidden_states
+
+class BertOutput(nn.Module):
+    def __init__(self, config):
+        super(BertOutput, self).__init__()
+        self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
+        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=1e-12)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+    def forward(self, hidden_states, input_tensor):
+        hidden_states = self.dense(hidden_states)
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.LayerNorm(hidden_states + input_tensor)
+        return hidden_states
+
+class BertPooler(nn.Module):
+    def __init__(self, config):
+        super(BertPooler, self).__init__()
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        self.activation = nn.Tanh()
+
+    def forward(self, hidden_states):
+        # batch_size, sequence_length, hidden_size
+        print("Shape of hidden_states before pooling:", hidden_states.shape)
+        first_token_tensor = hidden_states    
+        pooled_output = self.dense(first_token_tensor)
+        pooled_output = self.activation(pooled_output)
+        return pooled_output
