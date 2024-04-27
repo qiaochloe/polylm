@@ -13,7 +13,7 @@ Activate your environment
 source ./env/bin/activate # MacOS
 ```
 
-Install PyTorch using the instructions on this [site](https://pytorch.org/get-started/locally/). 
+Install PyTorch using the instructions on this [site](https://pytorch.org/get-started/locally/). Choose the stable, pip, python, and default installation.
 
 Install other packages. 
 ```bash
