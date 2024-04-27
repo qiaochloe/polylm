@@ -1,9 +1,11 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import math
 import json
-from torch.nn.init import trunc_normal_
+
+# TODO
+# Add comments to the functions
+# Indicate which tf segment the functions refer to
 
 class BertConfig(object):
     def __init__(self, 
@@ -15,7 +17,8 @@ class BertConfig(object):
                  hidden_dropout_prob=0.1, 
                  attention_probs_dropout_prob=0.1, max_position_embeddings=512, 
                  initializer_range=0.02,
-                 vocab_size=32000):
+                 vocab_size=32000): # Added vocab_size to BertConfig
+        
         self.hidden_size = hidden_size
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
@@ -27,6 +30,7 @@ class BertConfig(object):
         self.initializer_range = initializer_range
         self.vocab_size = vocab_size
 
+    # TODO: check this does the same as the six library
     @classmethod
     def from_dict(cls, json_object):
         config = BertConfig()
@@ -34,6 +38,7 @@ class BertConfig(object):
             config.__dict__[key] = value
         return config
 
+    # TODO: check this does the same as tf.io.gfile.GFile
     @classmethod
     def from_json_file(cls, json_file):
         with open(json_file, "r") as reader:
@@ -41,12 +46,17 @@ class BertConfig(object):
         return cls.from_dict(json.loads(text))
 
     def to_dict(self):
-        return copy.deepcopy(self.__dict__)
+        output = copy.deepcopy(self.__dict__)
+        return output
 
     def to_json_string(self):
         return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
 class BertModel(nn.Module):
+    
+    # TODO: check if necessary to add is_training, input_embeddings, and input_mask
+    # parameters to the model init
+    
     def __init__(self, config):
         super(BertModel, self).__init__()
         self.embeddings = BertEmbeddings(config)
@@ -70,6 +80,7 @@ class BertModel(nn.Module):
         pooled_output = self.pooler(sequence_output)
         return sequence_output, pooled_output
 
+# TODO: replace with torch gelu?
 def gelu(x):
     return x * 0.5 * (1.0 + torch.erf(x / math.sqrt(2.0)))
 
