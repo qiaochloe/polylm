@@ -13,11 +13,7 @@ Activate your environment
 source ./env/bin/activate # MacOS
 ```
 
-Install PyTorch. Reference this [site](https://pytorch.org/get-started/locally/) if necessary. 
-
-```
-pip install torch torchvision torchaudio
-```
+Install PyTorch using the instructions on this [site](https://pytorch.org/get-started/locally/). 
 
 Install other packages. 
 ```bash
