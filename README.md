@@ -1,19 +1,25 @@
 # polylm
 
 # Setting up repository
-Hi chloe jason and claire heres some setup stuff(itll take a few minutes)
-Run the following line to set up your virtual environment
+
+Set up your virtual environment.
 ```bash
-python3.10 -m venv env
-```
-Enter your environment with 
-```bash
-./env/scripts/Activate
+python -m venv env python=3.10
 ```
 
-Go to [text](https://pytorch.org/get-started/locally/) and run the line that it tells you to
+Activate your environment
+```bash
+./env/scripts/Activate # Windows
+source ./env/bin/activate # MacOS
+```
 
-Run 
+Install PyTorch. Reference this [site](https://pytorch.org/get-started/locally/) if necessary. 
+
+```
+pip install torch torchvision torchaudio
+```
+
+Install other packages. 
 ```bash
 pip install requirements.txt
 ```
