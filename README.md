@@ -17,7 +17,7 @@ Install PyTorch using the instructions on this [site](https://pytorch.org/get-st
 
 Install other packages. 
 ```bash
-pip install requirements.txt
+pip install -r requirements.txt
 ```
 
 ## Training
