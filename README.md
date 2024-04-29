@@ -2,23 +2,23 @@
 
 ## Setting up repository
 
-Set up your virtual environment.
-```bash
-python3.10 -m venv .venv 
-```
+1. Set up your virtual environment.
+   ```bash
+   python3.10 -m venv .venv 
+   ```
 
-Activate your environment
-```bash
-.\.venv\scripts\activate # Windows
-source .venv/bin/activate # MacOS
-```
+2. Activate your environment
+   ```bash
+   .\.venv\scripts\activate # Windows
+   source .venv/bin/activate # MacOS
+   ```
 
-Install PyTorch using the instructions on this [site](https://pytorch.org/get-started/locally/). Choose the stable, pip, python, and default installation.
+3. Install PyTorch using the instructions on this [site](https://pytorch.org/get-started/locally/). Choose the stable, pip, python, and default installation.
 
-Install other packages. 
-```bash
-pip install -r requirements.txt
-```
+4. Install other packages. 
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 ## Training
 
@@ -28,7 +28,7 @@ The following command can be used to train a model with the same parameters as P
 
     python train.py --model_dir=models/ --corpus_path=data/bookcorpus/books_large_p1.txt --vocab_path=data/bookcorpus/vocab.txt --embedding_size=256 --bert_intermediate_size=1024 --n_disambiguation_layers=4 --n_prediction_layers=12 --max_senses_per_word=8 --min_occurrences_for_vocab=500 --min_occurrences_for_polysemy=20000 --max_seq_len=128 --gpus=0 --batch_size=32 --n_batches=6000000 --dl_warmup_steps=2000000 --ml_warmup_steps=1000000 --dl_r=1.5 --ml_coeff=0.1 --learning_rate=0.00003 --print_every=100 --save_every=10000
 
-### Using Oscar
+### Using OSCAR
 
 1. Connect to OSCAR through SSH.
    ```
