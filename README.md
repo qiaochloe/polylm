@@ -1,6 +1,6 @@
-# polylm
+# PolyLM
 
-# Setting up repository
+## Setting up repository
 
 Set up your virtual environment.
 ```bash
@@ -27,6 +27,42 @@ For training, download the bookcorpus dataset and place it in the `data/` folder
 The following command can be used to train a model with the same parameters as PolyLM<sub>BASE</sub>:
 
     python train.py --model_dir=models/ --corpus_path=data/bookcorpus/books_large_p1.txt --vocab_path=data/bookcorpus/vocab.txt --embedding_size=256 --bert_intermediate_size=1024 --n_disambiguation_layers=4 --n_prediction_layers=12 --max_senses_per_word=8 --min_occurrences_for_vocab=500 --min_occurrences_for_polysemy=20000 --max_seq_len=128 --gpus=0 --batch_size=32 --n_batches=6000000 --dl_warmup_steps=2000000 --ml_warmup_steps=1000000 --dl_r=1.5 --ml_coeff=0.1 --learning_rate=0.00003 --print_every=100 --save_every=10000
+
+### Using Oscar
+
+1. Connect to OSCAR through SSH.
+   ```
+   ssh <username>@ssh.ccv.brown.edu
+   ```
+   Note that Windows users need an SSH client like PuTTY. More details [here](https://docs.ccv.brown.edu/oscar/quickstart).
+
+2. Drag the `polylm` folder into the OSCAR filesystem using [SMB](https://docs.ccv.brown.edu/oscar/connecting-to-oscar/cifs)
+
+3. `cd` to the polylm folder and activate the virtual environment
+   ```
+   source .venv/bin/activate 
+   ```
+
+4. Request resources from OSCAR using either in interact or batch mode.
+
+   **Interact**
+
+   This requests an [interactive](https://docs.ccv.brown.edu/oscar/submitting-jobs/interact) session with 20 cores at 10GB per core for 1 hour. Note that you must stay connected to the login node.
+
+   ```bash
+   interact -n 20 -t 01:00:00 -m 10g
+   python train.py --model_dir=models/ --corpus_path=data/bookcorpus/books_large_p1.txt --vocab_path=data/bookcorpus/vocab.txt --embedding_size=256 --bert_intermediate_size=1024 --n_disambiguation_layers=4 --n_prediction_layers=12 --max_senses_per_word=8 --min_occurrences_for_vocab=500 --min_occurrences_for_polysemy=20000 --max_seq_len=128 --gpus=0 --batch_size=32 --n_batches=6000000 --dl_warmup_steps=2000000 --ml_warmup_steps=1000000 --dl_r=1.5 --ml_coeff=0.1 --learning_rate=0.00003 --print_every=100 --save_every=10000
+   ```
+
+   **Batch**
+
+   This requests a [batch job](https://docs.ccv.brown.edu/oscar/submitting-jobs/batch) 1 core and 4GB of memory per core for 1 hour.
+
+   ```bash
+   sbatch oscar_batch.sh
+   ```
+
+View your active jobs by running `myq`. In batch mode, you can view the output of the job in the file `slurm-<jobid>.out` in the directory where you invoked the `sbatch` command.
 
 ## Testing
 It is possible to use the download scripts provided in the `models` folder.
