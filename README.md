@@ -22,7 +22,7 @@
 
 ## Training
 
-For training, download the bookcorpus dataset and place it in the `data/` folder. Then run the `preprocessing.py` script. 
+For training, download the corpus dataset and place it in the `data/` folder. Then run the `preprocessing.py` script. 
 
 The following command can be used to train a model with the same parameters as PolyLM<sub>BASE</sub>:
 
