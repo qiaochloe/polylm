@@ -450,96 +450,96 @@ def clip_gradients(grads_and_vars, val):
 
 class PolyLM(torch.nn.Module):
     def __init__(self, vocab, options, multisense_vocab={}, training=False):
-        self._vocab = vocab
-        self._options = options
-        self._max_seq_len = self._options.max_seq_len
-        self._embedding_size = self._options.embedding_size
-        self._max_senses = self._options.max_senses_per_word
+        self.vocab = vocab
+        self.options = options
+        self.max_seq_len = self.options.max_seq_len
+        self.embedding_size = self.options.embedding_size
+        self.max_senses = self.options.max_senses_per_word
 
-        gpus = [int(x) for x in self._options.gpus.split(',')]
+        gpus = [int(x) for x in self.options.gpus.split(',')]
         logging.info('Building PolyLM on GPU(s) ' + ', '.join([str(x) for x in gpus]))
-        self._n_towers = len(gpus)
+        self.n_towers = len(gpus)
 
-        self._global_step = torch.ones(1, dtype=torch.int32)
-        self._learning_rate = torch.tensor([], dtype=torch.float32)
-        self._opt = torch.optim.Adam(self.parameters(), lr=self._learning_rate)
+        self.global_step = torch.ones(1, dtype=torch.int32)
+        self.learning_rate = torch.tensor([], dtype=torch.float32)
+        self.opt = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
 
-        self._n_senses = np.ones([self._vocab.size], dtype=np.int32)
+        self.n_senses = np.ones([self.vocab.size], dtype=np.int32)
         for t, n in multisense_vocab.items():
-            assert n > 0 and n <= self._max_senses
-            self._n_senses[t] = n
+            assert n > 0 and n <= self.max_senses
+            self.n_senses[t] = n
 
-        self._towers = []
-        self._grads = []
-        self._losses = []
-        self._lm_losses = []
-        self._d_losses = []
-        self._m_losses = []
+        self.towers = []
+        self.grads = []
+        self.losses = []
+        self.lm_losses = []
+        self.d_losses = []
+        self.m_losses = []
 
-        for i in range(self._n_towers):
+        for i in range(self.n_towers):
             #with torch.device('/gpu:%d' % i):
                 #will need to change this as it has variable scope into another class system. 
                 #with tf.variable_scope('polylm', reuse=tf.AUTO_REUSE):
                 tower = PolyLMModel(
-                        self._vocab, self._n_senses,
-                        self._options, training=training)
-                self._towers.append(tower)
-                self._losses.append(tower.loss)
-                self._grads.append(self._opt.compute_gradients(tower.loss))
-                self._lm_losses.append(tower.lm_loss)
-                self._d_losses.append(tower.d_loss)
-                self._m_losses.append(tower.m_loss)
+                        self.vocab, self.n_senses,
+                        self.options, training=training)
+                self.towers.append(tower)
+                self.losses.append(tower.loss)
+                self.grads.append(self.opt.compute_gradients(tower.loss))
+                self.lm_losses.append(tower.lm_loss)
+                self.d_losses.append(tower.d_loss)
+                self.m_losses.append(tower.m_loss)
 
-        self._default_model = self._towers[0]
-        self._loss = torch.mean(torch.stack(self._losses))
-        self._lm_loss = torch.mean(torch.stack(self._lm_losses))
-        self._d_loss = torch.mean(torch.stack(self._d_losses))
-        self._m_loss = torch.mean(torch.stack(self._m_losses))
+        self.default_model = self.towers[0]
+        self.loss = torch.mean(torch.stack(self.losses))
+        self.lm_loss = torch.mean(torch.stack(self.lm_losses))
+        self.d_loss = torch.mean(torch.stack(self.d_losses))
+        self.m_loss = torch.mean(torch.stack(self.m_losses))
         
-        grads_and_vars = average_gradients(self._grads)
-        clipped_grads, self._grad_norm = clip_gradients(grads_and_vars, self._options.max_gradient_norm)
-        self._update_params = self._opt.apply_gradients(clipped_grads, global_step=self._global_step)
+        grads_and_vars = average_gradients(self.grads)
+        clipped_grads, self.grad_norm = clip_gradients(grads_and_vars, self.options.max_gradient_norm)
+        self.update_params = self.opt.apply_gradients(clipped_grads, global_step=self.global_step)
        
-        self._update_params
-        self._default_model._update_mean_qp
-        self._default_model._update_mean_qd 
+        self.update_params
+        self.default_model.update_mean_qp
+        self.default_model.update_mean_qd 
         
-        # self._saver = torch.save(self._default_model.state_dict(), 'checkpoint.pth')
+        # self.saver = torch.save(self.default_model.state_dict(), 'checkpoint.pth')
 
     # NOTE: removed attempt_restore, get_embeddings, get_masked
 
     def _train_on_batch(self, batches, step_num):
-        assert len(batches) == self._n_towers
-        if step_num < self._options.lr_warmup_steps:
-            lr_ratio = (step_num + 1) / self._options.lr_warmup_steps
-        elif self._options.anneal_lr:
-            lr_ratio = (self._options.n_batches -
-                        step_num) / self._options.n_batches
+        assert len(batches) == self.n_towers
+        if step_num < self.options.lr_warmup_steps:
+            lr_ratio = (step_num + 1) / self.options.lr_warmup_steps
+        elif self.options.anneal_lr:
+            lr_ratio = (self.options.n_batches -
+                        step_num) / self.options.n_batches
         else:
             lr_ratio = 1.0
-        learning_rate = lr_ratio * self._options.learning_rate
+        learning_rate = lr_ratio * self.options.learning_rate
 
-        if step_num < self._options.dl_warmup_steps:
-            dl_ratio = step_num / self._options.dl_warmup_steps
-            dl_r = 1.0 + dl_ratio * (self._options.dl_r - 1.0)
+        if step_num < self.options.dl_warmup_steps:
+            dl_ratio = step_num / self.options.dl_warmup_steps
+            dl_r = 1.0 + dl_ratio * (self.options.dl_r - 1.0)
         else:
-            dl_r = self._options.dl_r
+            dl_r = self.options.dl_r
 
-        if step_num < self._options.ml_warmup_steps:
-            ml_ratio = step_num / self._options.ml_warmup_steps
-            ml_coeff = ml_ratio * self._options.ml_coeff
+        if step_num < self.options.ml_warmup_steps:
+            ml_ratio = step_num / self.options.ml_warmup_steps
+            ml_coeff = ml_ratio * self.options.ml_coeff
         else:
-            ml_coeff = self._options.ml_coeff
+            ml_coeff = self.options.ml_coeff
 
-        feed_dict = {self._learning_rate: learning_rate}
+        feed_dict = {self.learning_rate: learning_rate}
         for i, batch in enumerate(batches):
-            self._towers[i].add_to_feed_dict(feed_dict, batch, dl_r, ml_coeff)
+            self.towers[i].add_to_feed_dict(feed_dict, batch, dl_r, ml_coeff)
 
         start_time = time.time()
-        self._optimizer.zero_grad()
-        loss = self._loss 
+        self.optimizer.zero_grad()
+        loss = self.loss 
         loss.backward()
-        self._optimizer.step()
+        self.optimizer.step()
         end_time = time.time()
         
         batch_output = {
@@ -548,11 +548,11 @@ class PolyLM(torch.nn.Module):
             "dl_r": dl_r,
             "ml_coeff": ml_coeff,
             "loss": loss.item(),
-            "lm_loss": self._lm_loss.item(),
-            "d_loss": self._d_loss.item(),
-            "m_loss": self._m_loss.item(),
-            "global_step": self._global_step,
-            "grad_norm": torch.norm(self._model.parameters()).item(),
+            "lm_loss": self.lm_loss.item(),
+            "d_loss": self.d_loss.item(),
+            "m_loss": self.m_loss.item(),
+            "global_step": self.global_step,
+            "grad_norm": torch.norm(self.model.parameters()).item(),
         }
 
         return batch_output
@@ -560,18 +560,18 @@ class PolyLM(torch.nn.Module):
     # TODO: remove get_n_senses, get_sense_probs
 
     #def get_n_senses(self, vocab_id):
-    #    return self._n_senses[vocab_id]
+    #    return self.n_senses[vocab_id]
 
     #def get_sense_probs(self, vocab_ids):
-    #    return self._default_model._get_mean_sense_probs(vocab_ids)[0]
+    #    return self.default_model.get_mean_sense_probs(vocab_ids)[0]
 
     def train(self, corpus, test_words=[]):
         logging.info('Commencing training...')
-        logging.info('Vocab size: %d' % self._vocab.size)
-        logging.info('Total senses: %d' % np.sum(self._n_senses))
+        logging.info('Vocab size: %d' % self.vocab.size)
+        logging.info('Total senses: %d' % np.sum(self.n_senses))
 
-        checkpoint_path = os.path.join(self._options.model_dir, 'polylm.ckpt')
-        test_tokens = [self._vocab.str2id(w) for w in test_words]
+        checkpoint_path = os.path.join(self.options.model_dir, 'polylm.ckpt')
+        test_tokens = [self.vocab.str2id(w) for w in test_words]
         
         self.display_words(test_words)
         
@@ -584,27 +584,27 @@ class PolyLM(torch.nn.Module):
         #global_step = 1
         tokens_read = 0
         masking_policy = [
-                float(x) for x in self._options.masking_policy.split()]
+                float(x) for x in self.options.masking_policy.split()]
         logging.info('Masking policy: %.2f [MASK], %.2f self, %.2f random' % (
                 masking_policy[0],
                 masking_policy[1],
                 masking_policy[2]))
         batch_gen = corpus.generate_batches(
-                self._options.batch_size, self._options.max_seq_len,
-                self._options.mask_prob, variable_length=True,
+                self.options.batch_size, self.options.max_seq_len,
+                self.options.mask_prob, variable_length=True,
                 masking_policy=masking_policy)
-        batch_num = self._global_step
+        batch_num = self.global_step
         block_start_batch = batch_num
         block_start_time = time.time()
-        while batch_num < self._options.n_batches:
+        while batch_num < self.options.n_batches:
             batch_num += 1
             batches = []
-            for i in range(self._n_towers):
+            for i in range(self.n_towers):
                 batch = next(batch_gen)
                 batches.append(batch)
                 tokens_read += batch.n_tokens()
 
-            batch_output = self._train_on_batch(batches, batch_num)
+            batch_output = self.train_on_batch(batches, batch_num)
 
             gpu_time_for_block += batch_output['time']
             loss_for_block += batch_output['loss']
@@ -613,7 +613,7 @@ class PolyLM(torch.nn.Module):
             m_loss_for_block += batch_output['m_loss']
             norm_for_block += batch_output['grad_norm']
 
-            if batch_num % self._options.print_every == 0:
+            if batch_num % self.options.print_every == 0:
                 block_end_time = time.time()
                 block_size = batch_num - block_start_batch
                 time_for_block = block_end_time - block_start_time
@@ -637,7 +637,7 @@ class PolyLM(torch.nn.Module):
                 block_start_batch = batch_num
                 block_start_time = block_end_time
 
-            if batch_num % self._options.test_every == 0:
+            if batch_num % self.options.test_every == 0:
                 self.display_words(test_words)
                 logging.info(
                         'lr = %.8f, dl_r = %.5f, ml_coeff = %.5f' % (
@@ -645,38 +645,38 @@ class PolyLM(torch.nn.Module):
                                 batch_output['dl_r'],
                                 batch_output['ml_coeff']))
 
-            # if batch_num % self._options.save_every == 0:
+            # if batch_num % self.options.save_every == 0:
                 # logging.info('Saving to %s...' % checkpoint_path)
-                # self._saver.save(checkpoint_path, global_step=self._global_step)
+                # self.saver.save(checkpoint_path, global_step=self.global_step)
 
 
     #def disambiguate(self, batch, method='prediction'):
-    #    return self._default_model.disambiguate(batch, method=method)
+    #    return self.default_model.disambiguate(batch, method=method)
 
     #def contextualize(self, batch):
-    #    return self._default_model.contextualize(batch)
+    #    return self.default_model.contextualize(batch)
 
     #def get_target_probs(self, batch):
-    #    return self._default_model.get_target_probs(batch)
+    #    return self.default_model.get_target_probs(batch)
 
     #def match(self, keys, values):
-    #    return self._default_model.match(keys, values)
+    #    return self.default_model.match(keys, values)
 
     #def get_top_k_substitutes(self, reps, k):
-    #    return self._default_model.get_top_k_substitutes(reps, k)
+    #    return self.default_model.get_top_k_substitutes(reps, k)
 
     def display_words(self, words):
-        vocab_ids = [self._vocab.str2id(t) for t in words]
-        words = [self._vocab.id2str(i) for i in vocab_ids]
-        sense_stats = self._default_model._get_mean_sense_probs(vocab_ids)
-        similarities, tokens, senses = self._default_model.get_neighbours(vocab_ids)
+        vocab_ids = [self.vocab.str2id(t) for t in words]
+        words = [self.vocab.id2str(i) for i in vocab_ids]
+        sense_stats = self.default_model.get_mean_sense_probs(vocab_ids)
+        similarities, tokens, senses = self.default_model.get_neighbours(vocab_ids)
         
         for i, (vocab_id, word) in enumerate(zip(vocab_ids, words)):
             info = [
                     'qd=%.4f, qp=%.4f' % (
                             sense_stats['qd'][i, s],
                             sense_stats['qp'][i, s])
-                    for s in range(self._n_senses[vocab_id])]
-            util.display_word(self._vocab, word, similarities[i, :, :],
+                    for s in range(self.n_senses[vocab_id])]
+            util.display_word(self.vocab, word, similarities[i, :, :],
                               tokens[i, :, :], senses[i, :, :],
-                              self._n_senses[vocab_id], info=info)
+                              self.n_senses[vocab_id], info=info)
