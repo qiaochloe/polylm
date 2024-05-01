@@ -20,50 +20,50 @@ def masked_softmax(logits, mask):
 
 class PolyLMModel(torch.nn.Module):
     def __init__(self, vocab, n_senses, options, training=False):
-        self._vocab = vocab
-        self._embedding_size = options.embedding_size
-        self._max_seq_len = options.max_seq_len
-        self._max_senses = options.max_senses_per_word
-        self._training = training
-        self._has_disambiguation_layer = (
-                options.use_disambiguation_layer and self._max_senses > 1
+        self.vocab = vocab
+        self.embedding_size = options.embedding_size
+        self.max_seq_len = options.max_seq_len
+        self.max_senses = options.max_senses_per_word
+        self.training = training
+        self.has_disambiguation_layer = (
+                options.use_disambiguation_layer and self.max_senses > 1
         )
         
-        self._disambiguation_bert_config = bert.BertConfig(
-                hidden_size=self._embedding_size,
+        self.disambiguation_bert_config = bert.BertConfig(
+                hidden_size=self.embedding_size,
                 num_hidden_layers=options.n_disambiguation_layers,
                 intermediate_size=options.bert_intermediate_size,
                 num_attention_heads=options.n_attention_heads,
                 hidden_dropout_prob=options.dropout,
                 attention_probs_dropout_prob=options.dropout,
-                max_position_embeddings=self._max_seq_len)
+                max_position_embeddings=self.max_seq_len)
 
-        self._prediction_bert_config = bert.BertConfig(
-                hidden_size=self._embedding_size,
+        self.prediction_bert_config = bert.BertConfig(
+                hidden_size=self.embedding_size,
                 num_hidden_layers=options.n_prediction_layers,
                 intermediate_size=options.bert_intermediate_size,
                 num_attention_heads=options.n_attention_heads,
                 hidden_dropout_prob=options.dropout,
                 attention_probs_dropout_prob=options.dropout,
-                max_position_embeddings=self._max_seq_len)
+                max_position_embeddings=self.max_seq_len)
 
-        self._unmasked_seqs = torch.tensor([None, None], dtype=torch.int32)
-        self._masked_seqs = torch.tensor([None, None], dtype=torch.int32)
+        self.unmasked_seqs = torch.empty((0, 0), dtype=torch.int32)
+        self.masked_seqs = torch.empty((0, 0), dtype=torch.int32)
 
-        self._padding = torch.tensor([None, None], dtype=torch.int32)
-        self._targets = torch.tensor([None], dtype=torch.int32)
+        self.padding = torch.empty((0, 0), dtype=torch.int32)
+        self.targets = torch.empty((0), dtype=torch.int32)
 
-        self._target_positions = torch.tensor([None], dtype = torch.int32)
+        self.target_positions = torch.empty((0), dtype = torch.int32)
 
-        self._dl_r = torch.tensor([], dtype = torch.float32)
-        self._ml_coeff = torch.tensor([], dtype = torch.float32)
+        self.dl_r = torch.tensor([], dtype = torch.float32)
+        self.ml_coeff = torch.tensor([], dtype = torch.float32)
 
-        self._total_senses = np.sum(n_senses) + 1
-        sense_indices = np.zeros([self._vocab.size, self._max_senses], dtype=np.int32)
-        sense_to_token = np.zeros([self._total_senses], dtype=np.int32)
-        sense_to_sense_num = np.zeros([self._total_senses], dtype=np.int32)
-        sense_mask = np.zeros([self._vocab.size, self._max_senses], dtype=np.float32)
-        is_multisense = np.zeros([self._vocab.size], dtype=np.float32)
+        self.total_senses = np.sum(n_senses) + 1
+        sense_indices = np.zeros([self.vocab.size, self.max_senses], dtype=np.int32)
+        sense_to_token = np.zeros([self.total_senses], dtype=np.int32)
+        sense_to_sense_num = np.zeros([self.total_senses], dtype=np.int32)
+        sense_mask = np.zeros([self.vocab.size, self.max_senses], dtype=np.float32)
+        is_multisense = np.zeros([self.vocab.size], dtype=np.float32)
         
         index = 1
         for i, n in enumerate(n_senses):
@@ -76,75 +76,75 @@ class PolyLMModel(torch.nn.Module):
                 sense_to_sense_num[index] = j
                 index += 1
 
-        self._sense_indices = torch.tensor(sense_indices)
-        self._sense_mask = torch.tensor(sense_mask)
-        self._is_multisense = torch.tensor(is_multisense)
-        self._n_senses = torch.tensor(n_senses)
-        self._sense_to_token = torch.tensor(sense_to_token)
-        self._sense_to_sense_num = torch.tensor(sense_to_sense_num)
+        self.sense_indices = torch.tensor(sense_indices)
+        self.sense_mask = torch.tensor(sense_mask)
+        self.is_multisense = torch.tensor(is_multisense)
+        self.n_senses = torch.tensor(n_senses)
+        self.sense_to_token = torch.tensor(sense_to_token)
+        self.sense_to_sense_num = torch.tensor(sense_to_sense_num)
         
-        self._embeddings = torch.nn.Parameter(torch.randn(self._total_senses, self._embedding_size) / np.sqrt(self._embedding_size))
-        self._biases = torch.nn.Parameter(torch.zeros(self._total_senses - 1))
-        self._biases_with_dummy = torch.cat([torch.tensor([-1e30]), self._biases])
-        self._sense_weight_logits = torch.nn.Parameter(torch.zeros(self._vocab.size, self._max_senses))
+        self.embeddings = torch.nn.Parameter(torch.randn(self.total_senses, self.embedding_size) / np.sqrt(self.embedding_size))
+        self.biases = torch.nn.Parameter(torch.zeros(self.total_senses - 1))
+        self.biases_with_dummy = torch.cat([torch.tensor([-1e30]), self.biases])
+        self.sense_weight_logits = torch.nn.Parameter(torch.zeros(self.vocab.size, self.max_senses))
 
-        # self._embedding_initializer = torch.nn.Embedding(self._total_senses, self._embedding_size)
+        # self.embedding_initializer = torch.nn.Embedding(self.total_senses, self.embedding_size)
         
-        # bias_zeros = np.zeros(self._total_senses - 1)
+        # bias_zeros = np.zeros(self.total_senses - 1)
         # dummy = np.concatenate([-1e30], bias_zeros) 
         # self.biases = torch.tensor(dummy)
     
         # self.sense_weight_logits = np.zeros_like(sense_mask)
         
         no_predict_tokens = [
-                self._vocab.bos_vocab_id, 
-                self._vocab.eos_vocab_id,
-                self._vocab.pad_vocab_id, 
-                self._vocab.mask_vocab_id
+                self.vocab.bos_vocab_id, 
+                self.vocab.eos_vocab_id,
+                self.vocab.pad_vocab_id, 
+                self.vocab.mask_vocab_id
         ]
         
-        unpredictable_tokens = np.zeros([self._total_senses], dtype=np.float32)
+        unpredictable_tokens = np.zeros([self.total_senses], dtype=np.float32)
         for t in no_predict_tokens:
             unpredictable_tokens[sense_indices[t, 0]] = 1.0
-        self._unpredictable_tokens = torch.tensor(unpredictable_tokens)
+        self.unpredictable_tokens = torch.tensor(unpredictable_tokens)
         
         mean_prob = sense_mask / np.sum(sense_mask, axis=1, keepdims=True)
-        self._mean_qp = torch.full(
-            (self._vocab.size, self._max_senses), 
+        self.mean_qp = torch.full(
+            (self.vocab.size, self.max_senses), 
             mean_prob, 
             requires_grad=False
         )
-        self._mean_qd = torch.full(
-            (self._vocab.size, self._max_senses), 
+        self.mean_qd = torch.full(
+            (self.vocab.size, self.max_senses), 
             mean_prob, 
             requires_grad=False
         )
         
         if options.use_disambiguation_layer:
-            self._disambiguated_reps, _ = self._disambiguation_layer(self._masked_seqs)
-            _, self._qd = self._disambiguation_layer(self._unmasked_seqs)
-            self._qd = torch.reshape(self._qd, [-1, self._max_senses])
-            self._qd = torch.nn.functional.embedding(self._target_positions, self._qd)
+            self.disambiguated_reps, _ = self.disambiguation_layer(self.masked_seqs)
+            _, self.qd = self.disambiguation_layer(self.unmasked_seqs)
+            self.qd = torch.reshape(self.qd, [-1, self.max_senses])
+            self.qd = torch.nn.functional.embedding(self.target_positions, self.qd)
         else:
             pass
-            #self._disambiguated_reps = self._get_single_sense_embeddings(
-            #        self._masked_seqs)
-        self._output_reps = self._prediction_layer(self._disambiguated_reps)
+            #self.disambiguated_reps = self.get_single_sense_embeddings(
+            #        self.masked_seqs)
+        self.output_reps = self.prediction_layer(self.disambiguated_reps)
         
-        flattened_reps = torch.reshape(self._output_reps, [-1, self._embedding_size])
+        flattened_reps = torch.reshape(self.output_reps, [-1, self.embedding_size])
         
         # (n_targets, embedding_size)
-        self._target_reps = torch.nn.functional.embedding(
-            self._target_positions, flattened_reps
+        self.target_reps = torch.nn.functional.embedding(
+            self.target_positions, flattened_reps
         )
         # (n_targets, total_senses)
         target_position_scores = (
-                torch.matmul(self._target_reps, self._embeddings.t()) +
-                torch.unsqueeze(self._biases_with_dummy, 0) -
-                1e30 * torch.unsqueeze(self._unpredictable_tokens, 0))
+                torch.matmul(self.target_reps, self.embeddings.t()) +
+                torch.unsqueeze(self.biases_with_dummy, 0) -
+                1e30 * torch.unsqueeze(self.unpredictable_tokens, 0))
         target_position_probs = torch.nn.functional.softmax(target_position_scores, dim=1)
         target_sense_indices = torch.nn.functional.embedding(
-            self._targets, self._sense_indices
+            self.targets, self.sense_indices
         )
         # TODO: might replace manually_batched_gather with this
         # self.target_sense_probs = target_position_probs.gather(1, target_sense_indices)
@@ -152,30 +152,30 @@ class PolyLMModel(torch.nn.Module):
                 target_position_probs,
                 target_sense_indices)
         target_sense_masks = torch.nn.functional.embedding(
-                self._targets, self._sense_mask)
+                self.targets, self.sense_mask)
         self.target_sense_probs = self.target_sense_probs * target_sense_masks
         self.target_token_probs = torch.sum(self.target_sense_probs, axis=1)
         self.target_token_probs = torch.maximum(self.target_token_probs, 1e-30)
         log_target_probs = torch.log(self.target_token_probs)
         self.lm_loss = -torch.mean(log_target_probs)
         
-        self._qp = self.target_sense_probs / torch.unsqueeze(
+        self.qp = self.target_sense_probs / torch.unsqueeze(
                 self.target_token_probs, 1
         )
 
         targets_are_multisense = torch.nn.functional.embedding(
-            self._targets, self._is_multisense
+            self.targets, self.is_multisense
         )
         n_multisense = torch.sum(targets_are_multisense) + 1e-6
 
-        sharpened_q = torch.pow(self._qp, self._dl_r)
+        sharpened_q = torch.pow(self.qp, self.dl_r)
         log_sharpened_q = torch.log(torch.sum(sharpened_q, axis=1))
         log_sharpened_q = log_sharpened_q * targets_are_multisense
-        self.d_loss = -torch.sum(log_sharpened_q) / (self._dl_r * n_multisense)
+        self.d_loss = -torch.sum(log_sharpened_q) / (self.dl_r * n_multisense)
 
-        if self._has_disambiguation_layer:
-            qp = self._qp.detach()
-            qd = self._qd
+        if self.has_disambiguation_layer:
+            qp = self.qp.detach()
+            qd = self.qd
 
             p_norms = torch.norm(qp, dim=1)
             d_norms = torch.norm(qd, dim=1)
@@ -183,25 +183,25 @@ class PolyLMModel(torch.nn.Module):
             div = p_norms * d_norms + 1e-10
             cosine_sim = num / div
             cosine_sim = cosine_sim * targets_are_multisense
-            self.m_loss = -self._ml_coeff * torch.sum(cosine_sim) / n_multisense
+            self.m_loss = -self.ml_coeff * torch.sum(cosine_sim) / n_multisense
 
-            self._update_mean_qd = self._update_smoothed_mean(
-                    self._mean_qd, qd,
-                    indices=torch.unsqueeze(self._targets, 1)
+            self.update_mean_qd = self.update_smoothed_mean(
+                    self.mean_qd, qd,
+                    indices=torch.unsqueeze(self.targets, 1)
             )
         else:
             self.m_loss = 0.0
-            self._update_mean_qd = torch.nn.Identity()
+            self.update_mean_qd = torch.nn.Identity()
 
-        self._update_mean_qp = self._update_smoothed_mean(
-                self._mean_qp, qp,
-                indices=torch.unsqueeze(self._targets, 1)
+        self.update_mean_qp = self.update_smoothed_mean(
+                self.mean_qp, qp,
+                indices=torch.unsqueeze(self.targets, 1)
         )
 
         self.loss = self.lm_loss + self.d_loss + self.m_loss
 
-        self._add_find_neighbours()
-        self._add_get_mean_q()
+        self.add_find_neighbours()
+        self.add_get_mean_q()
 
     def manually_batched_gather(params, indices, axis):
         batch_dims=1
@@ -212,25 +212,25 @@ class PolyLMModel(torch.nn.Module):
         return torch.stack(result)
 
     def _get_sense_embeddings(self, tokens):
-        sense_indices = torch.nn.functional.embedding(tokens, self._sense_indices)
-        return torch.nn.functional.embedding(sense_indices, self._embeddings)
+        sense_indices = torch.nn.functional.embedding(tokens, self.sense_indices)
+        return torch.nn.functional.embedding(sense_indices, self.embeddings)
 
     def _get_sense_embeddings_and_biases(self, tokens):
-        sense_indices = torch.nn.functional.embedding(tokens, self._sense_indices)
-        sense_embeddings = torch.nn.functional.embedding(sense_indices, self._embeddings)
-        sense_biases = torch.nn.functional.embedding(sense_indices, self._biases_with_dummy)
+        sense_indices = torch.nn.functional.embedding(tokens, self.sense_indices)
+        sense_embeddings = torch.nn.functional.embedding(sense_indices, self.embeddings)
+        sense_biases = torch.nn.functional.embedding(sense_indices, self.biases_with_dummy)
         return sense_embeddings, sense_biases
 
     def _make_word_embeddings(self, seqs, sense_weights=None):
         # ids.shape + (n_senses, embedding_size)
-        sense_embeddings = self._get_sense_embeddings(seqs)
+        sense_embeddings = self.get_sense_embeddings(seqs)
         
         if sense_weights is None:
             # ids.shape + (n_senses,)
             sense_weight_logits = torch.nn.functional.embedding(
-                seqs, self._sense_weight_logits
+                seqs, self.sense_weight_logits
             )
-            sense_mask = torch.nn.functional.embedding(seqs, self._sense_mask)
+            sense_mask = torch.nn.functional.embedding(seqs, self.sense_mask)
             sense_weights = masked_softmax(sense_weight_logits, sense_mask)
 
         # ids.shape + (embedding_size,)
@@ -240,38 +240,39 @@ class PolyLMModel(torch.nn.Module):
 
     def _calculate_sense_probs(self, seqs, reps):
         # ids.shape + (n_senses, embedding_size)
-        sense_embeddings, sense_biases = self._get_sense_embeddings_and_biases(seqs)
+        sense_embeddings, sense_biases = self.get_sense_embeddings_and_biases(seqs)
         # ids.shape + (n_senses, 1)
         sense_scores = torch.matmul(sense_embeddings, torch.unsqueeze(reps, dim=-1))
         # ids.shape + (n_senses)
         sense_scores = torch.squeeze(sense_scores, dim = -1)
         sense_scores = sense_scores + sense_biases
-        sense_mask = torch.nn.functional.embedding(seqs, self._sense_mask)
+        sense_mask = torch.nn.functional.embedding(seqs, self.sense_mask)
         return masked_softmax(sense_scores, sense_mask) 
     
 #for layers we will likely need to convert to classes --> and then check Bert implementation to 
 # walk over it. 
     def _disambiguation_layer(self, seqs):
-        word_embeddings = self._make_word_embeddings(seqs)
+        word_embeddings = self.make_word_embeddings(seqs)
         
-        model = bert.BertModel(self._disambiguation_bert_config)
+        model = bert.BertModel(self.disambiguation_bert_config)
         
         # (batch_size, sentence_len, embedding_size)
-        reps = model(word_embeddings, self._padding)
+        reps = model(word_embeddings, self.padding)
         # (batch_size, sentence_len, n_senses)
-        sense_probs = self._calculate_sense_probs(seqs, reps)
+        sense_probs = self.calculate_sense_probs(seqs, reps)
         
         # (batch_size, sentence_len, embedding_size)
-        disambiguated_reps = self._make_word_embeddings(
+        disambiguated_reps = self.make_word_embeddings(
             seqs, sense_weights=sense_probs
         )
 
         return disambiguated_reps, sense_probs
 
     def _prediction_layer(self, reps):
-        model = bert.BertModel(self._disambiguation_bert_config) 
-        return model(reps, self._padding)
+        model = bert.BertModel(self.disambiguation_bert_config) 
+        return model(reps, self.padding)
             
+    #change how to 
     def _update_smoothed_mean(self, mean, values, indices=None, weight=0.005):
         if indices is None:
             mean.data = (1.0 - weight) * mean + weight * values
@@ -280,8 +281,7 @@ class PolyLMModel(torch.nn.Module):
         # TODO: if this breaks, try
         # current_values = mean[indices]
         # updates = weight * (values - current_values)
-        # mean[indices] += updates
-        # return mean
+        # mean[indices]
         current_values = torch.gather(mean, indices)
         updates = weight * (values - current_values)
         return mean.scatter_add_(0, indices, updates)
@@ -290,125 +290,113 @@ class PolyLMModel(torch.nn.Module):
         padding = np.zeros(batch.unmasked_seqs.shape, dtype=np.int32)
         for i, l in enumerate(batch.seq_len):
             padding[i, :l] = 1
-        feed_dict.update(
-            {
-                self._unmasked_seqs: batch.unmasked_seqs,
-                self._masked_seqs: batch.masked_seqs,
-                self._padding: padding,
-                self._target_positions: batch.target_positions,
-                self._targets: batch.targets,
-                self._dl_r: dl_r,
-                self._ml_coeff: ml_coeff
-            }
-        )
+        feed_dict.update({
+                self.unmasked_seqs: batch.unmasked_seqs,
+                self.masked_seqs: batch.masked_seqs,
+                self.padding: padding,
+                self.target_positions: batch.target_positions,
+                self.targets: batch.targets,
+                self.dl_r: dl_r,
+                self.ml_coeff: ml_coeff})
 
-    def contextualize(self, sess, batch):
+    def contextualize(self, batch):
         padding = np.zeros(batch.masked_seqs.shape, dtype=np.int32)
         for i, l in enumerate(batch.seq_len):
             padding[i, :l] = 1
-        feed_dict = {
-                self._masked_seqs: batch.masked_seqs,
-                self._padding: padding,
-                self._target_positions: batch.target_positions}
-        return sess.run(self._target_reps, feed_dict=feed_dict)
+        
+        # TODO: this was previously in a dict that was passed into the session
+        # might have conflicts
+        self.masked_seqs = batch.masked_seqs,
+        self.padding = padding,
+        self.target_position = batch.target_positions
+        
+        return self.target_reps
 
-    def disambiguate(self, sess, batch, method='prediction'):
+    def disambiguate(self, batch, method='prediction'):
         padding = np.zeros(batch.masked_seqs.shape, dtype=np.int32)
         for i, l in enumerate(batch.seq_len):
             padding[i, :l] = 1
-        feed_dict = {
-                self._unmasked_seqs: batch.unmasked_seqs,
-                self._masked_seqs: batch.masked_seqs,
-                self._padding: padding,
-                self._target_positions: batch.target_positions,
-                self._targets: batch.targets}
-        prob_tensors = {'prediction': self._qp}
-        if self._has_disambiguation_layer:
-            prob_tensors['disambiguation'] = self._qd
-        return sess.run(prob_tensors[method], feed_dict=feed_dict)
+            
+        self.unmasked_seqs = batch.unmasked_seqs
+        self.masked_seqs = batch.masked_seqs
+        self.padding = padding
+        self.target_positions = batch.target_positions
+        self.targets = batch.targets
+        
+        prob_tensors = {'prediction': self.qp}
+        if self.has_disambiguation_layer:
+            prob_tensors['disambiguation'] = self.qd
+            
+        return prob_tesnsors[method]
 
-    def get_target_probs(self, sess, batch):
+    def get_target_probs(self, batch):
         padding = np.zeros(batch.masked_seqs.shape, dtype=np.int32)
         for i, l in enumerate(batch.seq_len):
             padding[i, :l] = 1
-        feed_dict = {
-                self._unmasked_seqs: batch.unmasked_seqs,
-                self._masked_seqs: batch.masked_seqs,
-                self._padding: padding,
-                self._target_positions: batch.target_positions,
-                self._targets: batch.targets}
-        return sess.run([self.target_token_probs, self.target_sense_probs],
-                        feed_dict=feed_dict)
+        
+        self.unmasked_seqs = batch.unmasked_seqs
+        self.masked_seqs = batch.masked_seqs
+        self.padding = padding
+        self.target_positions = batch.target_positions
+        self.targets = batch.targets
+                
+        return [self.target_token_probs, self.target_sense_probs]
 
     def _add_get_mean_q(self):
-        self._mean_q_tokens =  torch.tensor([None], dtype=torch.int32)
-        self._selected_mean_qp = torch.nn.functional.embedding(self._mean_q_tokens,
-                self._mean_qp)
-        self._selected_mean_qd = torch.nn.functional.embedding(self._mean_q_tokens,
-                self._mean_qd)
+        self.mean_q_tokens =  torch.empty((0), dtype=torch.int32)
+        self.selected_mean_qp = torch.nn.functional.embedding(self.mean_q_tokens, self.mean_qp)
+        self.selected_mean_qd = torch.nn.functional.embedding(self.mean_q_tokens, self.mean_qd)
 
-    def _get_mean_sense_probs(self, sess, tokens):
+    def _get_mean_sense_probs(self, tokens):
         request = {
-                'qp': self._selected_mean_qp,
-                'qd': self._selected_mean_qd,
+            'qp': self.selected_mean_qp,
+            'qd': self.selected_mean_qd,
         }
-        feed_dict = {self._mean_q_tokens: tokens}
-        return sess.run(request, feed_dict=feed_dict)
+        self.mean_q_tokens = tokens
+        return request
 
-    def get_sense_embeddings(self, sess):
-        return sess.run(self._embeddings)
+    def get_sense_embeddings(self):
+        return self.embeddings.data
 
     def _add_find_neighbours(self):
-        #torch.tensor([None, None], dtype=torch.int32)
+        self.interesting_ids = torch.empty((0), dtype=torch.int32)
+        self.n_neighbours = torch.tensor([], dtype=torch.int32)
 
+        sense_indices = torch.nn.functional.embedding(self.interesting_ids, self.sense_indices) 
+        interesting_embeddings =  torch.nn.functional.embedding(sense_indices, self.embeddings)
+        interesting_embeddings = torch.reshape(interesting_embeddings, [-1, self.embedding_size])
+        interesting_norms = torch.norm(interesting_embeddings, dim=1)
 
-        self._interesting_ids = torch.tensor([None], dtype=torch.int32)
-        self._n_neighbours = torch.tensor([], dtype=torch.int32)
-
-        sense_indices = torch.nn.functional.embedding(self._interesting_ids,
-                self._sense_indices) 
-        interesting_embeddings =  torch.nn.functional.embedding(sense_indices,
-                self._embeddings)
-        interesting_embeddings = torch.reshape(
-                interesting_embeddings, [-1, self._embedding_size])
-        interesting_norms = torch.norm(
-                interesting_embeddings, dim=1)
-
-        norms = torch.norm(self._embeddings, dim=1)
+        norms = torch.norm(self.embeddings, dim=1)
 
         # (n_interesting, vocab.size*n_senses)
         dot = torch.matmul(interesting_embeddings,
-                        torch.transpose(self._embeddings,0,1))
+                        torch.transpose(self.embeddings,0,1))
         dot = dot / torch.unsqueeze(interesting_norms, dim=1)
         dot = dot / torch.unsqueeze(norms, dim=0)
         cosine_similarities = torch.reshape(
                 dot,
-                [-1, self._max_senses, self._total_senses])
+                [-1, self.max_senses, self.total_senses])
         mask = torch.concat([
                 torch.tensor([2.0]),
-                torch.zeros([self._total_senses - 1], dtype=torch.float32)],
+                torch.zeros([self.total_senses - 1], dtype=torch.float32)],
                 dim=0)
         mask = torch.unsqueeze(mask, dim=0)
         mask = torch.unsqueeze(mask, dim=0)
         cosine_similarities = cosine_similarities - mask
 
-        self._neighbour_similarities, indices = torch.top_k(
-                cosine_similarities, k=self._n_neighbours)
-        self._neighbour_similarities = self._neighbour_similarities[:, :, 1:]
-        self._neighbour_tokens = torch.nn.functional.embedding(indices,
-                self._sense_to_token)[:, :, 1:]
-        self._neighbour_sense_nums = torch.nn.functional.embedding(indices,
-                self._sense_to_sense_num)[:, :, 1:]
+        self.neighbour_similarities, indices = torch.top_k(
+                cosine_similarities, k=self.n_neighbours)
+        self.neighbour_similarities = self.neighbour_similarities[:, :, 1:]
+        self.neighbour_tokens = torch.nn.functional.embedding(indices,
+                self.sense_to_token)[:, :, 1:]
+        self.neighbour_sense_nums = torch.nn.functional.embedding(indices,
+                self.sense_to_sense_num)[:, :, 1:]
 
-    def get_neighbours(self, sess, tokens, n=10):
-        feed_dict = {self._interesting_ids: tokens,
-                     self._n_neighbours: n}
-        similarities, tokens, sense_nums = sess.run(
-                [self._neighbour_similarities,
-                 self._neighbour_tokens,
-                 self._neighbour_sense_nums],
-                feed_dict=feed_dict)
-        return similarities, tokens, sense_nums
+    def get_neighbours(self, tokens, n=10):
+        self.interesting_ids = tokens
+        self.n_neighbours = n
+        return self.neighbour_similarities, self.neighbour_tokens, self.neighbour_sense_nums
 
 
 def _deduplicated_indexed_slices(values, indices):
@@ -460,11 +448,8 @@ def clip_gradients(grads_and_vars, val):
     clipped_grads, grad_norm = torch.nn.utils.clip_grad_norm_ (grads, val)
     return list(zip(clipped_grads, var)), grad_norm
 
-
 class PolyLM(torch.nn.Module):
-
-    def __init__(self, vocab, options,
-                 multisense_vocab={}, training=False):
+    def __init__(self, vocab, options, multisense_vocab={}, training=False):
         self._vocab = vocab
         self._options = options
         self._max_seq_len = self._options.max_seq_len
@@ -472,20 +457,12 @@ class PolyLM(torch.nn.Module):
         self._max_senses = self._options.max_senses_per_word
 
         gpus = [int(x) for x in self._options.gpus.split(',')]
-        logging.info(
-                'Building PolyLM on GPU(s) ' +
-                ', '.join([str(x) for x in gpus]))
+        logging.info('Building PolyLM on GPU(s) ' + ', '.join([str(x) for x in gpus]))
         self._n_towers = len(gpus)
 
-        #self._global_step = tf.get_variable(
-        #        'global_step', [],
-        #        initializer=tf.zeros_initializer(),
-        #        dtype=tf.int32,
-        #        trainable=False) 
-        
-        self._global_step = torch.nn.Parameter(torch.tensor(0), dtype=torch.int32, requires_grad=False)
-        self._learning_rate = torch.tensor([], dtype=torch.int32)
-        self._opt = torch.nn.optim.Adam(self.parameters(), lr=self._learning_rate.item())
+        self._global_step = torch.ones(1, dtype=torch.int32)
+        self._learning_rate = torch.tensor([], dtype=torch.float32)
+        self._opt = torch.optim.Adam(self.parameters(), lr=self._learning_rate)
 
         self._n_senses = np.ones([self._vocab.size], dtype=np.int32)
         for t, n in multisense_vocab.items():
@@ -508,8 +485,7 @@ class PolyLM(torch.nn.Module):
                         self._options, training=training)
                 self._towers.append(tower)
                 self._losses.append(tower.loss)
-                self._grads.append(
-                        self._opt.compute_gradients(tower.loss))
+                self._grads.append(self._opt.compute_gradients(tower.loss))
                 self._lm_losses.append(tower.lm_loss)
                 self._d_losses.append(tower.d_loss)
                 self._m_losses.append(tower.m_loss)
@@ -521,61 +497,18 @@ class PolyLM(torch.nn.Module):
         self._m_loss = torch.mean(torch.stack(self._m_losses))
         
         grads_and_vars = average_gradients(self._grads)
-        clipped_grads, self._grad_norm = clip_gradients(
-                grads_and_vars, self._options.max_gradient_norm)
-        self._update_params = self._opt.apply_gradients(
-                clipped_grads, global_step=self._global_step)
-        
-        #I don't know if this works at all
-        self._update = self.update_all
-
-        self._saver = torch.save(self._default_model.state_dict(), 'checkpoint.pth')
-
-    
-    def update_all(self):
-        self._update_params,
+        clipped_grads, self._grad_norm = clip_gradients(grads_and_vars, self._options.max_gradient_norm)
+        self._update_params = self._opt.apply_gradients(clipped_grads, global_step=self._global_step)
+       
+        self._update_params
         self._default_model._update_mean_qp
-        self._default_model._update_mean_qd
+        self._default_model._update_mean_qd 
+        
+        # self._saver = torch.save(self._default_model.state_dict(), 'checkpoint.pth')
 
-    def attempt_restore(self, sess, model_dir, expect_exists):
-        if self._options.checkpoint_version != -1:
-            path = '%s/polylm.ckpt-%d' % (
-                    model_dir, self._options.checkpoint_version)
-        else:
-            logging.info('Looking for model at %s...' % model_dir)
-            #path = tf.train.latest_checkpoint(model_dir)
-            path =  torch.load(model_dir)
+    # NOTE: removed attempt_restore, get_embeddings, get_masked
 
-        if os.path.exists(path):
-            #sess.run(tf.global_variables_initializer())
-            self.model.load_state_dict(torch.load(path))
-            logging.info('Reading model parameters from %s' % path)
-            #self._saver.restore(sess, path)
-        else:
-            if expect_exists:
-                bad_path = path if path else model_dir
-                raise Exception('There is no saved checkpoint at %s' %
-                                bad_path)
-            else:
-                logging.info('There is no saved checkpoint at %s. '
-                             'Creating model with fresh parameters.' %
-                             model_dir)
-                #sess.run(tf.global_variables_initializer())
-                #otherwise we just make a new one right?
-                self.__init__
-
-        #n_params = sum(v.get_shape().num_elements()
-         #              for v in tf.trainable_variables()
-         #              if v.get_shape().num_elements() is not None)
-        #logging.info('Num params: %d' % n_params)
-
-    def get_embeddings(self, sess):
-        return self._default_model.get_embeddings(sess)
-
-    def get_mask(self, sess):
-        return self._default_model.get_mask(sess)
-
-    def _train_on_batch(self, sess, batches, step_num):
+    def _train_on_batch(self, batches, step_num):
         assert len(batches) == self._n_towers
         if step_num < self._options.lr_warmup_steps:
             lr_ratio = (step_num + 1) / self._options.lr_warmup_steps
@@ -600,37 +533,39 @@ class PolyLM(torch.nn.Module):
 
         feed_dict = {self._learning_rate: learning_rate}
         for i, batch in enumerate(batches):
-            self._towers[i].add_to_feed_dict(
-                    feed_dict, batch, dl_r, ml_coeff)
-
-        fetches = {
-                'update': self._update(),
-                'loss': self._loss,
-                'lm_loss': self._lm_loss,
-                'd_loss': self._d_loss,
-                'm_loss': self._m_loss,
-                'global_step': self._global_step,
-                'grad_norm': self._grad_norm
-        }
+            self._towers[i].add_to_feed_dict(feed_dict, batch, dl_r, ml_coeff)
 
         start_time = time.time()
-        batch_output = sess.run(fetches, feed_dict=feed_dict)
+        self._optimizer.zero_grad()
+        loss = self._loss 
+        loss.backward()
+        self._optimizer.step()
         end_time = time.time()
-
-        batch_output['time'] = end_time - start_time
-        batch_output['lr'] = learning_rate
-        batch_output['dl_r'] = dl_r
-        batch_output['ml_coeff'] = ml_coeff
+        
+        batch_output = {
+            "time": end_time - start_time,
+            "lr": learning_rate,
+            "dl_r": dl_r,
+            "ml_coeff": ml_coeff,
+            "loss": loss.item(),
+            "lm_loss": self._lm_loss.item(),
+            "d_loss": self._d_loss.item(),
+            "m_loss": self._m_loss.item(),
+            "global_step": self._global_step,
+            "grad_norm": torch.norm(self._model.parameters()).item(),
+        }
 
         return batch_output
+    
+    # TODO: remove get_n_senses, get_sense_probs
 
-    def get_n_senses(self, vocab_id):
-        return self._n_senses[vocab_id]
+    #def get_n_senses(self, vocab_id):
+    #    return self._n_senses[vocab_id]
 
-    def get_sense_probs(self, sess, vocab_ids):
-        return self._default_model._get_mean_sense_probs(sess, vocab_ids)[0]
+    #def get_sense_probs(self, vocab_ids):
+    #    return self._default_model._get_mean_sense_probs(vocab_ids)[0]
 
-    def train(self, corpus, sess, test_words=[]):
+    def train(self, corpus, test_words=[]):
         logging.info('Commencing training...')
         logging.info('Vocab size: %d' % self._vocab.size)
         logging.info('Total senses: %d' % np.sum(self._n_senses))
@@ -638,7 +573,7 @@ class PolyLM(torch.nn.Module):
         checkpoint_path = os.path.join(self._options.model_dir, 'polylm.ckpt')
         test_tokens = [self._vocab.str2id(w) for w in test_words]
         
-        self.display_words(sess, test_words)
+        self.display_words(test_words)
         
         gpu_time_for_block = 0.0
         loss_for_block = 0.0
@@ -658,7 +593,7 @@ class PolyLM(torch.nn.Module):
                 self._options.batch_size, self._options.max_seq_len,
                 self._options.mask_prob, variable_length=True,
                 masking_policy=masking_policy)
-        batch_num = sess.run(self._global_step)
+        batch_num = self._global_step
         block_start_batch = batch_num
         block_start_time = time.time()
         while batch_num < self._options.n_batches:
@@ -669,7 +604,7 @@ class PolyLM(torch.nn.Module):
                 batches.append(batch)
                 tokens_read += batch.n_tokens()
 
-            batch_output = self._train_on_batch(sess, batches, batch_num)
+            batch_output = self._train_on_batch(batches, batch_num)
 
             gpu_time_for_block += batch_output['time']
             loss_for_block += batch_output['loss']
@@ -703,43 +638,38 @@ class PolyLM(torch.nn.Module):
                 block_start_time = block_end_time
 
             if batch_num % self._options.test_every == 0:
-                self.display_words(sess, test_words)
+                self.display_words(test_words)
                 logging.info(
                         'lr = %.8f, dl_r = %.5f, ml_coeff = %.5f' % (
                                 batch_output['lr'],
                                 batch_output['dl_r'],
                                 batch_output['ml_coeff']))
 
-            if batch_num % self._options.save_every == 0:
-                logging.info('Saving to %s...' % checkpoint_path)
-                self._saver.save(sess, checkpoint_path,
-                                 global_step=self._global_step)
+            # if batch_num % self._options.save_every == 0:
+                # logging.info('Saving to %s...' % checkpoint_path)
+                # self._saver.save(checkpoint_path, global_step=self._global_step)
 
 
-    def disambiguate(self, sess, batch, method='prediction'):
-        return self._default_model.disambiguate(
-                sess, batch, method=method)
+    #def disambiguate(self, batch, method='prediction'):
+    #    return self._default_model.disambiguate(batch, method=method)
 
-    def contextualize(self, sess, batch):
-        return self._default_model.contextualize(sess, batch)
+    #def contextualize(self, batch):
+    #    return self._default_model.contextualize(batch)
 
-    def get_target_probs(self, sess, batch):
-        return self._default_model.get_target_probs(sess, batch)
+    #def get_target_probs(self, batch):
+    #    return self._default_model.get_target_probs(batch)
 
-    def match(self, sess, keys, values):
-        return self._default_model.match(sess, keys, values)
+    #def match(self, keys, values):
+    #    return self._default_model.match(keys, values)
 
-    def get_top_k_substitutes(self, sess, reps, k):
-        return self._default_model.get_top_k_substitutes(
-                sess, reps, k)
+    #def get_top_k_substitutes(self, reps, k):
+    #    return self._default_model.get_top_k_substitutes(reps, k)
 
-    def display_words(self, sess, words):
+    def display_words(self, words):
         vocab_ids = [self._vocab.str2id(t) for t in words]
         words = [self._vocab.id2str(i) for i in vocab_ids]
-        sense_stats = self._default_model._get_mean_sense_probs(
-                sess, vocab_ids)
-        similarities, tokens, senses = self._default_model.get_neighbours(
-                sess, vocab_ids)
+        sense_stats = self._default_model._get_mean_sense_probs(vocab_ids)
+        similarities, tokens, senses = self._default_model.get_neighbours(vocab_ids)
         
         for i, (vocab_id, word) in enumerate(zip(vocab_ids, words)):
             info = [
@@ -750,6 +680,3 @@ class PolyLM(torch.nn.Module):
             util.display_word(self._vocab, word, similarities[i, :, :],
                               tokens[i, :, :], senses[i, :, :],
                               self._n_senses[vocab_id], info=info)
-
-
-        
