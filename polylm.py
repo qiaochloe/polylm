@@ -17,18 +17,24 @@ def masked_softmax(logits, mask):
     soft_max_f  = torch.nn.softmax(dim = -1)
     return soft_max_f(masked_logits)
 
+# model = PolyLMModel(vocab, n_senses, options, training=True)
+# logits = model(input_ids, attention_mask, token_type_ids)
+# loss = model.calculate_loss(logits, targets)
 
 class PolyLMModel(torch.nn.Module):
     def __init__(self, vocab, n_senses, options, training=False):
+        super(PolyLMModel, self).__init__()
         self.vocab = vocab
         self.embedding_size = options.embedding_size
         self.max_seq_len = options.max_seq_len
         self.max_senses = options.max_senses_per_word
         self.training = training
+        
         self.has_disambiguation_layer = (
                 options.use_disambiguation_layer and self.max_senses > 1
         )
         
+        # Set up BERT configurations
         self.disambiguation_bert_config = bert.BertConfig(
                 hidden_size=self.embedding_size,
                 num_hidden_layers=options.n_disambiguation_layers,
@@ -46,23 +52,33 @@ class PolyLMModel(torch.nn.Module):
                 hidden_dropout_prob=options.dropout,
                 attention_probs_dropout_prob=options.dropout,
                 max_position_embeddings=self.max_seq_len)
-
+        
+        self.disambiguation_bert = bert.BertModel(self.disambugiation_bert_config)
+        self.prediction_bert = bert.BertModel(self.prediction_bert_config)
+        
+        # For the disambiguation layer
         self.unmasked_seqs = torch.empty((0, 0), dtype=torch.int32)
         self.masked_seqs = torch.empty((0, 0), dtype=torch.int32)
-
         self.padding = torch.empty((0, 0), dtype=torch.int32)
         self.targets = torch.empty((0), dtype=torch.int32)
-
         self.target_positions = torch.empty((0), dtype = torch.int32)
 
+        # d_loss
         self.dl_r = torch.tensor([], dtype = torch.float32)
+        
+        # ml loss
         self.ml_coeff = torch.tensor([], dtype = torch.float32)
-
+        
         self.total_senses = np.sum(n_senses) + 1
-        sense_indices = np.zeros([self.vocab.size, self.max_senses], dtype=np.int32)
+
+        # sense_indices = np.zeros([self.vocab.size, self.max_senses], dtype=np.int32)
+        self.sense_indices = nn.Parameter(torch.from_numpy(self.setup_sense_indices(n_senses, total_senses)), requires_grad=False)
+        # sense_mask = np.zeros([self.vocab.size, self.max_senses], dtype=np.float32)
+        self.sense_mask = self.sense_indices > 0
+        
+        # TODO: Don't know what this is for  
         sense_to_token = np.zeros([self.total_senses], dtype=np.int32)
         sense_to_sense_num = np.zeros([self.total_senses], dtype=np.int32)
-        sense_mask = np.zeros([self.vocab.size, self.max_senses], dtype=np.float32)
         is_multisense = np.zeros([self.vocab.size], dtype=np.float32)
         
         index = 1
@@ -85,6 +101,7 @@ class PolyLMModel(torch.nn.Module):
         
         self.embeddings = torch.nn.Parameter(torch.randn(self.total_senses, self.embedding_size) / np.sqrt(self.embedding_size))
         self.biases = torch.nn.Parameter(torch.zeros(self.total_senses - 1))
+        # Dummy for out-of-bound indices
         self.biases_with_dummy = torch.cat([torch.tensor([-1e30]), self.biases])
         self.sense_weight_logits = torch.nn.Parameter(torch.zeros(self.vocab.size, self.max_senses))
 
@@ -129,8 +146,8 @@ class PolyLMModel(torch.nn.Module):
             pass
             #self.disambiguated_reps = self.get_single_sense_embeddings(
             #        self.masked_seqs)
-        self.output_reps = self.prediction_layer(self.disambiguated_reps)
         
+        self.output_reps = self.prediction_layer(self.disambiguated_reps)
         flattened_reps = torch.reshape(self.output_reps, [-1, self.embedding_size])
         
         # (n_targets, embedding_size)
@@ -199,10 +216,24 @@ class PolyLMModel(torch.nn.Module):
         )
 
         self.loss = self.lm_loss + self.d_loss + self.m_loss
-
         self.add_find_neighbours()
         self.add_get_mean_q()
 
+    #def forward(self, input_ids, attention_mask=None, token_type_ids=None):
+    #    outputs = self.disambiguation_bert(input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids)
+    #    sequence_output = outputs.last_hidden_state
+    #    logits = torch.matmul(sequence_output, self.embeddings.t()) + self.biases_with_dummy
+    #    return logits
+    
+    def setup_sense_indices(self, n_senses, total_senses):
+        sense_indices = np.zeros((self.vocab.size, self.max_senses), dtype=np.int32)
+        index = 1
+        for i, n in enumerate(n_senses):
+            for j in range(n):
+                sense_indices[i, j] = index
+                index += 1
+        return sense_indices
+        
     def manually_batched_gather(params, indices, axis):
         batch_dims=1
         result = []
@@ -450,6 +481,8 @@ def clip_gradients(grads_and_vars, val):
 
 class PolyLM(torch.nn.Module):
     def __init__(self, vocab, options, multisense_vocab={}, training=False):
+        super(PolyLM, self).__init__()
+        
         self.vocab = vocab
         self.options = options
         self.max_seq_len = self.options.max_seq_len
@@ -461,7 +494,7 @@ class PolyLM(torch.nn.Module):
         self.n_towers = len(gpus)
 
         self.global_step = torch.ones(1, dtype=torch.int32)
-        self.learning_rate = torch.tensor([], dtype=torch.float32)
+        self.learning_rate = options.learning_rate
         self.opt = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
 
         self.n_senses = np.ones([self.vocab.size], dtype=np.int32)
