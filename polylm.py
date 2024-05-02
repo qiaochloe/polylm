@@ -299,7 +299,7 @@ class PolyLMModel(torch.nn.Module):
     #        padding[i, :l] = 1
     #    feed_dict.update({
     #            self.unmasked_seqs: batch.unmasked_seqs,
-    #            self.masked_seqs: batch.masked_seqs,
+    #            self.masked_seqs: batch.masked_seqs, 
     #            self.padding: padding,
     #            self.target_positions: batch.target_positions,
     #            self.targets: batch.targets,
@@ -452,6 +452,65 @@ def clip_gradients(grads_and_vars, val):
     clipped_grads, grad_norm = torch.nn.utils.clip_grad_norm_ (grads, val)
     return list(zip(clipped_grads, var)), grad_norm
 
+class PolyLM(nn.Module):
+    def __init__(self, vocab, options, multisense_vocab={}, training=False):
+        super(PolyLM, self).__init__()
+        self.vocab = vocab
+        self.options = options
+        self.max_seq_len = options.max_seq_len
+        self.embedding_size = options.embedding_size
+        self.max_senses = options.max_senses_per_word
+        self.training = training
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Initialize sense numbers
+        self.n_senses = torch.ones(vocab.size, dtype=torch.int32)
+        for t, n in multisense_vocab.items():
+            assert 0 < n <= self.max_senses
+            self.n_senses[t] = n
+
+        # Model setup across GPUs
+        self.models = nn.ModuleList([
+            PolyLMModel(vocab, self.n_senses, options, training=training).to(f'cuda:{i}')
+            for i in range(len(options.gpus.split(",")))
+        ])
+        
+        self.global_step = 0 # global_step = torch.ones(1, dtype=torch.int32)
+        self.optimizer = optim.Adam(self.parameters(), lr=options.learning_rate)
+
+
+    def train_model(self, dataloader, num_epochs):
+        for epoch in range(num_epochs):
+            for batch_idx, batch in enumerate(dataloader):
+                losses, lm_losses, d_losses, m_losses = [], [], [], []
+                for model in self.models:
+                    model.train()
+                    loss, lm_loss, d_loss, m_loss = model(*batch)
+                    loss.backward()
+                    losses.append(loss.item())
+                    lm_losses.append(lm_loss.item())
+                    d_losses.append(d_loss.item())
+                    m_losses.append(m_loss.item())
+                
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+
+                if batch_idx % self.options.print_every == 0:
+                    avg_loss = np.mean(losses)
+                    avg_lm_loss = np.mean(lm_losses)
+                    avg_d_loss = np.mean(d_losses)
+                    avg_m_loss = np.mean(m_losses)
+                    logging.info(f"Batch {batch_idx}, Loss: {avg_loss}, LM Loss: {avg_lm_loss}, D Loss: {avg_d_loss}, M Loss: {avg_m_loss}")
+
+                self.global_step += 1
+
+    def save_model(self, path):
+        torch.save(self.state_dict(), path)
+
+    def load_model(self, path):
+        self.load_state_dict(torch.load(path))
+        self.eval()
+
 class PolyLM(torch.nn.Module):
     def __init__(self, vocab, options, multisense_vocab={}, training=False):
         super(PolyLM, self).__init__()
@@ -469,6 +528,7 @@ class PolyLM(torch.nn.Module):
 
         self.global_step = torch.ones(1, dtype=torch.int32)
 
+        # Initialize sense numbers
         self.n_senses = np.ones([self.vocab.size], dtype=np.int32)
         for t, n in multisense_vocab.items():
             assert n > 0 and n <= self.max_senses
@@ -489,11 +549,12 @@ class PolyLM(torch.nn.Module):
                         self.vocab, self.n_senses,
                         self.options, training=training)
                 self.towers.append(tower)
-                self.losses.append()
-                self.grads.append(tower.opt.compute_gradients(tower.loss))
-                self.lm_losses.append(tower.lm_loss)
-                self.d_losses.append(tower.d_loss)
-                self.m_losses.append(tower.m_loss)
+                loss, lm_loss, d_loss, m_loss = tower.forward()
+                self.losses.append(loss)
+                self.grads.append(tower.opt.compute_gradients(loss))
+                self.lm_losses.append(lm_loss)
+                self.d_losses.append(d_loss)
+                self.m_losses.append(m_loss)
 
         self.default_model = self.towers[0]
         self.loss = torch.mean(torch.stack(self.losses))
@@ -505,7 +566,7 @@ class PolyLM(torch.nn.Module):
         clipped_grads, self.grad_norm = clip_gradients(grads_and_vars, self.options.max_gradient_norm)
         self.update_params = tower.opt.apply_gradients(clipped_grads, global_step=self.global_step)
        
-        self.update_params
+        #self.update_params
         self.default_model.update_mean_qp
         self.default_model.update_mean_qd 
         
