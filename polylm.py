@@ -1,4 +1,4 @@
-import init
+#import init
 import math
 import logging
 import os
@@ -483,7 +483,7 @@ class PolyLM(torch.nn.Module):
         #        dtype=tf.int32,
         #        trainable=False) 
         
-        self._global_step = torch.nn.Parameter(torch.tensor(0), dtype=torch.int32, requires_grad=False)
+        self._global_step = torch.nn.Parameter(torch.tensor(0), requires_grad=False)
         self._learning_rate = torch.tensor([], dtype=torch.int32)
         self._opt = torch.nn.optim.Adam(self.parameters(), lr=self._learning_rate.item())
 
