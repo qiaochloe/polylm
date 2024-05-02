@@ -14,8 +14,7 @@ import util
 
 def masked_softmax(logits, mask):
     masked_logits = logits - 1e30 * (1.0 - mask)
-    soft_max_f  = torch.nn.softmax(dim = -1)
-    return soft_max_f(masked_logits)
+    return torch.nn.functional.softmax(masked_logits, dim=-1)
 
 # model = PolyLMModel(vocab, n_senses, options, training=True)
 # logits = model(input_ids, attention_mask, token_type_ids)
@@ -24,12 +23,14 @@ def masked_softmax(logits, mask):
 class PolyLMModel(torch.nn.Module):
     def __init__(self, vocab, n_senses, options, training=False):
         super(PolyLMModel, self).__init__()
+
+        # Initialization
         self.vocab = vocab
         self.embedding_size = options.embedding_size
         self.max_seq_len = options.max_seq_len
         self.max_senses = options.max_senses_per_word
         self.training = training
-        
+
         self.has_disambiguation_layer = (
                 options.use_disambiguation_layer and self.max_senses > 1
         )
@@ -53,7 +54,7 @@ class PolyLMModel(torch.nn.Module):
                 attention_probs_dropout_prob=options.dropout,
                 max_position_embeddings=self.max_seq_len)
         
-        self.disambiguation_bert = bert.BertModel(self.disambugiation_bert_config)
+        self.disambiguation_bert = bert.BertModel(self.disambiguation_bert_config)
         self.prediction_bert = bert.BertModel(self.prediction_bert_config)
         
         # For the disambiguation layer
@@ -65,18 +66,12 @@ class PolyLMModel(torch.nn.Module):
 
         # d_loss
         self.dl_r = torch.tensor([], dtype = torch.float32)
-        
-        # ml loss
-        self.ml_coeff = torch.tensor([], dtype = torch.float32)
-        
+        self.ml_coeff = torch.tensor([], dtype = torch.float32) 
         self.total_senses = np.sum(n_senses) + 1
 
-        # sense_indices = np.zeros([self.vocab.size, self.max_senses], dtype=np.int32)
-        self.sense_indices = nn.Parameter(torch.from_numpy(self.setup_sense_indices(n_senses, total_senses)), requires_grad=False)
-        # sense_mask = np.zeros([self.vocab.size, self.max_senses], dtype=np.float32)
-        self.sense_mask = self.sense_indices > 0
+        sense_indices = np.zeros([self.vocab.size, self.max_senses], dtype=np.int32)
+        sense_mask = np.zeros([self.vocab.size, self.max_senses], dtype=np.float32)
         
-        # TODO: Don't know what this is for  
         sense_to_token = np.zeros([self.total_senses], dtype=np.int32)
         sense_to_sense_num = np.zeros([self.total_senses], dtype=np.int32)
         is_multisense = np.zeros([self.vocab.size], dtype=np.float32)
@@ -92,6 +87,7 @@ class PolyLMModel(torch.nn.Module):
                 sense_to_sense_num[index] = j
                 index += 1
 
+        self.sense_indices = torch.tensor(sense_indices)
         self.sense_indices = torch.tensor(sense_indices)
         self.sense_mask = torch.tensor(sense_mask)
         self.is_multisense = torch.tensor(is_multisense)
@@ -126,15 +122,17 @@ class PolyLMModel(torch.nn.Module):
         self.unpredictable_tokens = torch.tensor(unpredictable_tokens)
         
         mean_prob = sense_mask / np.sum(sense_mask, axis=1, keepdims=True)
-        self.mean_qp = torch.full(
+
+        mean_qp = torch.tensor(mean_prob)
+        self.mean_qp = torch.reshape(
+            mean_qp,
             (self.vocab.size, self.max_senses), 
-            mean_prob, 
-            requires_grad=False
         )
-        self.mean_qd = torch.full(
+
+        mean_qd = torch.tensor(mean_prob)
+        self.mean_qd = torch.reshape(
+            mean_qd, 
             (self.vocab.size, self.max_senses), 
-            mean_prob, 
-            requires_grad=False
         )
         
         if options.use_disambiguation_layer:
@@ -219,11 +217,24 @@ class PolyLMModel(torch.nn.Module):
         self.add_find_neighbours()
         self.add_get_mean_q()
 
+        self.learning_rate = options.learning_rate
+        self.opt = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+
+
     #def forward(self, input_ids, attention_mask=None, token_type_ids=None):
     #    outputs = self.disambiguation_bert(input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids)
     #    sequence_output = outputs.last_hidden_state
     #    logits = torch.matmul(sequence_output, self.embeddings.t()) + self.biases_with_dummy
     #    return logits
+
+    def train_model(self, corpus):
+        for batch_num, batch_data in enumerate(corpus):
+            self.optimizer.zero_grad()
+            loss = self.forward(batch_data)
+            loss.backward()
+            self.optimizer.step()
+            self.scheduler.step()
+            print(f'Batch {batch_num}, Loss {loss.item()}')
     
     def setup_sense_indices(self, n_senses, total_senses):
         sense_indices = np.zeros((self.vocab.size, self.max_senses), dtype=np.int32)
@@ -242,17 +253,17 @@ class PolyLMModel(torch.nn.Module):
                 result.append(r)
         return torch.stack(result)
 
-    def _get_sense_embeddings(self, tokens):
+    def get_sense_embeddings(self, tokens):
         sense_indices = torch.nn.functional.embedding(tokens, self.sense_indices)
         return torch.nn.functional.embedding(sense_indices, self.embeddings)
 
-    def _get_sense_embeddings_and_biases(self, tokens):
+    def get_sense_embeddings_and_biases(self, tokens):
         sense_indices = torch.nn.functional.embedding(tokens, self.sense_indices)
         sense_embeddings = torch.nn.functional.embedding(sense_indices, self.embeddings)
         sense_biases = torch.nn.functional.embedding(sense_indices, self.biases_with_dummy)
         return sense_embeddings, sense_biases
 
-    def _make_word_embeddings(self, seqs, sense_weights=None):
+    def make_word_embeddings(self, seqs, sense_weights=None):
         # ids.shape + (n_senses, embedding_size)
         sense_embeddings = self.get_sense_embeddings(seqs)
         
@@ -269,7 +280,7 @@ class PolyLMModel(torch.nn.Module):
                 torch.transpose(sense_embeddings,0,1),
                 torch.unsqueeze(sense_weights, dim=-1)), dim = -1)
 
-    def _calculate_sense_probs(self, seqs, reps):
+    def calculate_sense_probs(self, seqs, reps):
         # ids.shape + (n_senses, embedding_size)
         sense_embeddings, sense_biases = self.get_sense_embeddings_and_biases(seqs)
         # ids.shape + (n_senses, 1)
@@ -282,7 +293,7 @@ class PolyLMModel(torch.nn.Module):
     
 #for layers we will likely need to convert to classes --> and then check Bert implementation to 
 # walk over it. 
-    def _disambiguation_layer(self, seqs):
+    def disambiguation_layer(self, seqs):
         word_embeddings = self.make_word_embeddings(seqs)
         
         model = bert.BertModel(self.disambiguation_bert_config)
@@ -299,12 +310,12 @@ class PolyLMModel(torch.nn.Module):
 
         return disambiguated_reps, sense_probs
 
-    def _prediction_layer(self, reps):
+    def prediction_layer(self, reps):
         model = bert.BertModel(self.disambiguation_bert_config) 
         return model(reps, self.padding)
             
     #change how to 
-    def _update_smoothed_mean(self, mean, values, indices=None, weight=0.005):
+    def update_smoothed_mean(self, mean, values, indices=None, weight=0.005):
         if indices is None:
             mean.data = (1.0 - weight) * mean + weight * values
             return mean
@@ -373,12 +384,12 @@ class PolyLMModel(torch.nn.Module):
                 
         return [self.target_token_probs, self.target_sense_probs]
 
-    def _add_get_mean_q(self):
+    def add_get_mean_q(self):
         self.mean_q_tokens =  torch.empty((0), dtype=torch.int32)
         self.selected_mean_qp = torch.nn.functional.embedding(self.mean_q_tokens, self.mean_qp)
         self.selected_mean_qd = torch.nn.functional.embedding(self.mean_q_tokens, self.mean_qd)
 
-    def _get_mean_sense_probs(self, tokens):
+    def get_mean_sense_probs(self, tokens):
         request = {
             'qp': self.selected_mean_qp,
             'qd': self.selected_mean_qd,
@@ -386,10 +397,10 @@ class PolyLMModel(torch.nn.Module):
         self.mean_q_tokens = tokens
         return request
 
-    def get_sense_embeddings(self):
-        return self.embeddings.data
+    #def get_sense_embeddings(self):
+    #    return self.embeddings.data
 
-    def _add_find_neighbours(self):
+    def add_find_neighbours(self):
         self.interesting_ids = torch.empty((0), dtype=torch.int32)
         self.n_neighbours = torch.tensor([], dtype=torch.int32)
 
@@ -430,7 +441,7 @@ class PolyLMModel(torch.nn.Module):
         return self.neighbour_similarities, self.neighbour_tokens, self.neighbour_sense_nums
 
 
-def _deduplicated_indexed_slices(values, indices):
+def deduplicated_indexed_slices(values, indices):
     # Calculate unique indices and their counts
     unique_indices, inverse_indices = torch.unique(indices, return_inverse=True)
     counts = torch.bincount(inverse_indices)
@@ -485,6 +496,7 @@ class PolyLM(torch.nn.Module):
         
         self.vocab = vocab
         self.options = options
+        self.training = training
         self.max_seq_len = self.options.max_seq_len
         self.embedding_size = self.options.embedding_size
         self.max_senses = self.options.max_senses_per_word
@@ -494,8 +506,6 @@ class PolyLM(torch.nn.Module):
         self.n_towers = len(gpus)
 
         self.global_step = torch.ones(1, dtype=torch.int32)
-        self.learning_rate = options.learning_rate
-        self.opt = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
 
         self.n_senses = np.ones([self.vocab.size], dtype=np.int32)
         for t, n in multisense_vocab.items():
@@ -518,7 +528,7 @@ class PolyLM(torch.nn.Module):
                         self.options, training=training)
                 self.towers.append(tower)
                 self.losses.append(tower.loss)
-                self.grads.append(self.opt.compute_gradients(tower.loss))
+                self.grads.append(tower.opt.compute_gradients(tower.loss))
                 self.lm_losses.append(tower.lm_loss)
                 self.d_losses.append(tower.d_loss)
                 self.m_losses.append(tower.m_loss)
@@ -531,7 +541,7 @@ class PolyLM(torch.nn.Module):
         
         grads_and_vars = average_gradients(self.grads)
         clipped_grads, self.grad_norm = clip_gradients(grads_and_vars, self.options.max_gradient_norm)
-        self.update_params = self.opt.apply_gradients(clipped_grads, global_step=self.global_step)
+        self.update_params = tower.opt.apply_gradients(clipped_grads, global_step=self.global_step)
        
         self.update_params
         self.default_model.update_mean_qp
@@ -541,7 +551,7 @@ class PolyLM(torch.nn.Module):
 
     # NOTE: removed attempt_restore, get_embeddings, get_masked
 
-    def _train_on_batch(self, batches, step_num):
+    def train_on_batch(self, batches, step_num):
         assert len(batches) == self.n_towers
         if step_num < self.options.lr_warmup_steps:
             lr_ratio = (step_num + 1) / self.options.lr_warmup_steps
