@@ -488,12 +488,13 @@ class PolyLM(torch.nn.Module):
                 tower = PolyLMModel(
                         self.vocab, self.n_senses,
                         self.options, training=training)
+                
                 self.towers.append(tower)
-                self.losses.append(tower.loss)
-                self.grads.append(tower.opt.compute_gradients(tower.loss))
-                self.lm_losses.append(tower.lm_loss)
-                self.d_losses.append(tower.d_loss)
-                self.m_losses.append(tower.m_loss)
+                self.losses.append(0)
+                self.grads.append(0)
+                self.lm_losses.append(0)
+                self.d_losses.append(0)
+                self.m_losses.append(0)
 
         self.default_model = self.towers[0]
         self.loss = torch.mean(torch.stack(self.losses))
@@ -545,6 +546,10 @@ class PolyLM(torch.nn.Module):
 
         start_time = time.time()
         self.optimizer.zero_grad()
+        for i, batch in enumerate(batches):
+            loss, lm_loss, d_loss, m_loss = self._towers[i].forward(batches.unmasked_seqs, batches.masked_seqs, _, batches.target_positions, batches.targets, dl_r, ml_coeff)
+
+         
         loss = self.loss 
         loss.backward()
         self.optimizer.step()
