@@ -51,7 +51,7 @@ The following command can be used to train a model with the same parameters as P
 
    ```bash
    interact -n 20 -t 01:00:00 -m 10g
-   python train.py --model_dir=models/ --corpus_path=data/bookcorpus/books_large_p1.txt --vocab_path=data/bookcorpus/vocab.txt --embedding_size=256 --bert_intermediate_size=1024 --n_disambiguation_layers=4 --n_prediction_layers=12 --max_senses_per_word=8 --min_occurrences_for_vocab=500 --min_occurrences_for_polysemy=20000 --max_seq_len=128 --gpus=0 --batch_size=32 --n_batches=6000000 --dl_warmup_steps=2000000 --ml_warmup_steps=1000000 --dl_r=1.5 --ml_coeff=0.1 --learning_rate=0.00003 --print_every=100 --save_every=10000
+   python train.py --model_dir=models/ --corpus_path=data/bookcorpus/books_large_p1.txt --vocab_path=data/bookcorpus/vocab.txt --embedding_size=256 --bert_intermediate_size=1024 --n_disambiguation_layers=4 --n_prediction_layers=12 --max_senses_per_word=8 --min_occurrences_for_vocab=500 --min_occurrences_for_polysemy=20000 --max_seq_len=128 --gpus=0 --batch_size=32 --n_batches=6000000 --dl_warmup_steps=2000000 --ml_warmup_steps=1000000 --dl_r=1.5 --ml_coeff=0.1 --learning_rate=0.00003 --print_every=100 --save_every=100
    ```
 
    **Batch**
@@ -84,9 +84,9 @@ Download [Stanford CoreNLP's part-of-speech tagger v3.9.2](https://nlp.stanford.
 
 PolyLM evaluation can be performed as follows:
 
-    ./wsi.sh data/wsi/SemEval-2010 SemEval-2010 /models/polylm-lemmatized-large --gpus 0 --pos_tagger_root /stanford-postagger-2018-10-16/models/english-bidirectional-distsim.tagger
+    ./wsi.sh data/wsi/SemEval-2010 SemEval-2010 ./models/polylm-lemmatized-large --gpus 0 --pos_tagger_root /stanford-postagger-2018-10-16/models/english-bidirectional-distsim.tagger
 
-    ./wsi.sh data/wsi/SemEval-2013 SemEval-2013 /models/polylm-lemmatized-large --gpus 0 --pos_tagger_root /stanford-postagger-2018-10-16/models/english-bidirectional-distsim.tagger
+    ./wsi.sh data/wsi/SemEval-2013 SemEval-2013 ./models/polylm-lemmatized-large --gpus 0 --pos_tagger_root /stanford-postagger-2018-10-16/models/english-bidirectional-distsim.tagger
 
 
 Note that inference is only supported on a single GPU currently, but is generally very fast.

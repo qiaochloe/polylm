@@ -9,3 +9,8 @@ nltk
 scikit-learn
 tensorflow
 tf_slim
+
+# For downloads 
+gdown
+wget
+unzip
