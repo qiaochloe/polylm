@@ -33,8 +33,10 @@ if __name__ == "__main__":
     options.corpus_path = "data/processed_corpus.txt"
     options.vocab_path = "data/corpus_vocab.txt"
     
-    vocab = Vocabulary(options.vocab_path, options.min_occurrences_for_vocab)
+    vocab = Vocabulary(options.vocab_path, options.min_occurrences_for_vocab, build=False)
     multisense_vocab = get_multisense_vocab(options.n_senses_file, vocab, options)
+    
     model = polylm.PolyLM(vocab, options, multisense_vocab, training=True)
     corpus = Corpus(options.corpus_path, vocab)
-    model.train(corpus) # TODO: CHECK NEWEST IMPLEMENTATION
+    
+    model.train_model(corpus, 1)

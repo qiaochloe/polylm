@@ -3,3 +3,9 @@ numpy
 Pillow
 matplotlib
 tqdm
+
+# For tfbert
+nltk
+scikit-learn
+tensorflow
+tf_slim
