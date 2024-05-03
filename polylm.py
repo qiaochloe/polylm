@@ -63,6 +63,8 @@ class PolyLMModel(torch.nn.Module):
 
         # Initialize sense indices and masks
         total_senses = n_senses.sum() + 1
+        self.senses = total_senses
+
         sense_indices = np.zeros([self.vocab.size, self.max_senses], dtype=np.int32)
         sense_mask = np.zeros([self.vocab.size, self.max_senses], dtype=np.float32)
         is_multisense = np.zeros([self.vocab.size], dtype=np.float32)
@@ -100,6 +102,12 @@ class PolyLMModel(torch.nn.Module):
         self.optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
         
     def forward(self, unmasked_seqs, masked_seqs, padding, target_positions, targets, dl_r, ml_coeff):
+
+        #since imbedding are failing, what if you make it here?
+        self.embeddings = torch.nn.Embedding(num_embeddings=self.senses, embedding_dim=self.embedding_size) #self.embeddings = torch.nn.Parameter(torch.randn(self.total_senses, self.embedding_size) / np.sqrt(self.embedding_size))
+        self.biases = torch.nn.Parameter(torch.zeros(self.senses)) #self.biases = torch.nn.Parameter(torch.zeros(self.total_senses - 1)) (NOTE: REMOVED - 1)
+        self.biases_with_dummy = torch.cat([torch.tensor([-1e30]), self.biases]) 
+        self.sense_weight_logits = torch.nn.Parameter(torch.zeros(self.vocab.size, self.max_senses))
         
         padding = np.zeros(unmasked_seqs.shape, dtype=np.int32)
         #for i, l in enumerate(self.max_seq_length):
@@ -113,12 +121,13 @@ class PolyLMModel(torch.nn.Module):
             _, qd = self.disambiguation_layer(unmasked_seqs)
             qd = qd.view(-1, self.max_senses)
             #qd = torch.reshape(qd, (-1, self.max_senses))
-            qd = torch.nn.functional.embedding(target_positions, qd)
+            #qd = torch.nn.functional.embedding(target_positions, qd)
+            qd = qd[target_positions]
         else:
             pass
             #self.disambiguated_reps = self.get_single_sense_embeddings(
             #        self.masked_seqs)
-        
+       
         output_reps = self.prediction_layer(disambiguated_reps)
     
         flattened_reps = output_reps.view(-1, self.embedding_size) 
@@ -154,9 +163,16 @@ class PolyLMModel(torch.nn.Module):
         targets_are_multisense = self.is_multisense[targets]
         n_multisense = torch.sum(targets_are_multisense) + 1e-6
 
+
         sharpened_q = torch.pow(qp, dl_r)
-        log_sharpened_q = torch.log(torch.sum(sharpened_q, dim=1))
+
+
+        eps=1e-7
+        sharpened_q = torch.nn.functional.relu(sharpened_q)
+        log_sharpened_q = torch.log(torch.sum(sharpened_q + eps, dim=1))
         log_sharpened_q *= targets_are_multisense
+
+    
         d_loss = -torch.sum(log_sharpened_q) / (dl_r * n_multisense)
 
         # NOTE:  This is the more advanced version which uses biases_with_dummy and unpredictable_tokens
@@ -319,6 +335,7 @@ class PolyLMModel(torch.nn.Module):
     def make_word_embeddings(self, seqs, sense_weights=None):
         # ids.shape + (n_senses, embedding_size)
         sense_embeddings = self.get_sense_embeddings(seqs)
+
         if sense_weights is None:
             sense_weight_logits = self.sense_weight_logits[seqs]
             sense_mask = self.sense_mask[seqs]
@@ -354,7 +371,7 @@ class PolyLMModel(torch.nn.Module):
         #attention_mask = (1 - self.padding).unsqueeze(1).unsqueeze(2)
         #attention_mask = attention_mask.to(dtype=torch.float32)
         #attention_mask = (1.0 - attention_mask) * -10000.0 
-        
+
         word_embeddings = self.make_word_embeddings(seqs)
         word_embeddings = tf.convert_to_tensor(word_embeddings.detach().numpy())
         padding = tf.convert_to_tensor(self.padding.detach().numpy())
@@ -374,6 +391,7 @@ class PolyLMModel(torch.nn.Module):
         
         reps = model.get_output()
         reps = torch.from_numpy(reps.numpy())
+
         sense_probs = self.calculate_sense_probs(seqs, reps)
         disambiguated_reps = self.make_word_embeddings(seqs, sense_weights=sense_probs)
         
@@ -625,6 +643,7 @@ class PolyLM(torch.nn.Module):
             masking_policy=masking_policy)
          
         # Training loop
+
         for epoch in range(num_epochs):
             total_loss = 0
             batch_count = 0
@@ -649,16 +668,15 @@ class PolyLM(torch.nn.Module):
                 optimizer.step()
 
                 # Loss accumulation
-                print(total_loss)
                 total_loss += total_loss.item()
                 batch_count += 1
             
             # Logging
-            if batch_count > 0:
-                average_loss = total_loss / batch_count
-                print(f'Epoch {epoch+1}/{num_epochs}, Loss: {average_loss:.4f}')
-            else:
-                print("No batches processed.")
+                if batch_count > 0:
+                    average_loss = total_loss / batch_count
+                    print(f'Epoch {epoch+1}/{num_epochs}, Loss: {average_loss:.4f}')
+                else:
+                    print("No batches processed.")
 
         print('Finished Training')
 
