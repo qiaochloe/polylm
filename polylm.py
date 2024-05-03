@@ -12,15 +12,17 @@ import numpy as np
 from tfbert import BertModel, BertConfig
 import util
 
-import tensorflow as tf
-
-def masked_softmax(logits, mask):
-    masked_logits = logits - 1e30 * (1.0 - mask)
-    return torch.nn.functional.softmax(masked_logits, dim=-1)
+is_tf = True
+if is_tf:
+    import tensorflow as tf
 
 # model = PolyLMModel(vocab, n_senses, options, training=True)
 # logits = model(input_ids, attention_mask, token_type_ids)
 # loss = model.calculate_loss(logits, targets)
+
+def masked_softmax(logits, mask):
+    masked_logits = logits - 1e30 * (1.0 - mask)
+    return torch.nn.functional.softmax(masked_logits, dim=-1)
 
 class PolyLMModel(torch.nn.Module):
     def __init__(self, vocab, n_senses, options, training=False):
@@ -33,7 +35,6 @@ class PolyLMModel(torch.nn.Module):
         self.max_seq_len = options.max_seq_len
         self.max_senses = options.max_senses_per_word
         self.training = training
-
         self.has_disambiguation_layer = (options.use_disambiguation_layer and self.max_senses > 1)
         
         # Set up BERT
@@ -46,8 +47,6 @@ class PolyLMModel(torch.nn.Module):
             attention_probs_dropout_prob=options.dropout,
             max_position_embeddings=self.max_seq_len,
         )
-        
-        #self.disambiguation_bert = BertModel(self.disambiguation_bert_config)
 
         self.prediction_bert_config = BertConfig(
             hidden_size=self.embedding_size,
@@ -59,12 +58,11 @@ class PolyLMModel(torch.nn.Module):
             max_position_embeddings=self.max_seq_len,
         )
         
-        #self.prediction_bert = BertModel(self.prediction_bert_config)
-
-        # Initialize sense indices and masks
-        total_senses = n_senses.sum() + 1
-        self.senses = total_senses
-
+        # NOTE: unmasked_seqs, masked_seqs, padding, targets, target_positions, dl_r, and ml_coeff are passed directly into the forward function by corpus.generate_batches()
+        # We do not need to initialize placeholders for them here
+        
+        # SENSE INDICES AND MASKS
+        self.total_senses = n_senses.sum() + 1
         sense_indices = np.zeros([self.vocab.size, self.max_senses], dtype=np.int32)
         sense_mask = np.zeros([self.vocab.size, self.max_senses], dtype=np.float32)
         is_multisense = np.zeros([self.vocab.size], dtype=np.float32)
@@ -89,54 +87,76 @@ class PolyLMModel(torch.nn.Module):
         #self.sense_to_token = torch.tensor(sense_to_token)
         #self.sense_to_sense_num = torch.tensor(sense_to_sense_num)
 
-        # Embeddings and biases
-        self.embeddings = torch.nn.Embedding(num_embeddings=total_senses, embedding_dim=self.embedding_size) #self.embeddings = torch.nn.Parameter(torch.randn(self.total_senses, self.embedding_size) / np.sqrt(self.embedding_size))
-        self.biases = torch.nn.Parameter(torch.zeros(total_senses)) #self.biases = torch.nn.Parameter(torch.zeros(self.total_senses - 1)) (NOTE: REMOVED - 1)
+        # EMBEDDINGS AND BIASES
+        # Used the embedding class instead of initializing parameters
+        self.embeddings = torch.nn.Embedding(
+            num_embeddings=self.total_senses, 
+            embedding_dim=self.embedding_size
+        ) 
+        self.biases = torch.nn.Parameter(torch.zeros(self.total_senses - 1)) 
         self.biases_with_dummy = torch.cat([torch.tensor([-1e30]), self.biases]) 
         self.sense_weight_logits = torch.nn.Parameter(torch.zeros(self.vocab.size, self.max_senses))
         
-        # NOTE: EVERYTHING ELSE FROM INIT IS PLACED IN THE FORWARD FUNCTION
+        # NOTE: Everything else from init is placed in the forward function
         # LINE 111: no_predict_tokens
         
         self.learning_rate = options.learning_rate
         self.optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
         
-    def forward(self, unmasked_seqs, masked_seqs, padding, target_positions, targets, dl_r, ml_coeff):
+        # THIS IS FOR SOMETHING
+        
+        no_predict_tokens = [
+            self.vocab.bos_vocab_id,
+            self.vocab.eos_vocab_id,
+            self.vocab.pad_vocab_id,
+            self.vocab.mask_vocab_id,
+        ]
+        
+        unpredictable_tokens = np.zeros([self.total_senses], dtype=np.float32)
+        for t in no_predict_tokens:
+            unpredictable_tokens[self.sense_indices[t, 0]] = 1.0
+        self.unpredictable_tokens = torch.tensor(unpredictable_tokens)
+        
+        #mean_qp = torch.tensor(mean_prob)
+        #self.mean_qp = torch.reshape(
+        #    mean_qp,
+        #    (self.vocab.size, self.max_senses), 
+        #)
 
-        #since imbedding are failing, what if you make it here?
-        self.embeddings = torch.nn.Embedding(num_embeddings=self.senses, embedding_dim=self.embedding_size) #self.embeddings = torch.nn.Parameter(torch.randn(self.total_senses, self.embedding_size) / np.sqrt(self.embedding_size))
-        self.biases = torch.nn.Parameter(torch.zeros(self.senses)) #self.biases = torch.nn.Parameter(torch.zeros(self.total_senses - 1)) (NOTE: REMOVED - 1)
-        self.biases_with_dummy = torch.cat([torch.tensor([-1e30]), self.biases]) 
-        self.sense_weight_logits = torch.nn.Parameter(torch.zeros(self.vocab.size, self.max_senses))
+        #mean_qd = torch.tensor(mean_prob)
+        #self.mean_qd = torch.reshape(
+        #    mean_qd, 
+        #    (self.vocab.size, self.max_senses), 
+        #)
         
-        padding = np.zeros(unmasked_seqs.shape, dtype=np.int32)
-        #for i, l in enumerate(self.max_seq_length):
-        #    padding[i, :l] = 1
-            
-        self.padding = torch.tensor(padding)
+        #self.update_mean_qp = self.update_smoothed_mean(
+        #        self.mean_qp, qp,
+        #        indices=torch.unsqueeze(self.targets, 1)
+        #)
+
+        #self.add_find_neighbours()
+        #self.add_get_mean_q()
         
-        # STOP @ DISAMBIGUATION LAYER
+    def forward(self, unmasked_seqs, masked_seqs, padding, target_positions, targets, dl_r, ml_coeff):
+        
+        # This is used in BERT 
+        self.padding = padding
+        
         if self.options.use_disambiguation_layer:
             disambiguated_reps, _ = self.disambiguation_layer(masked_seqs)
             _, qd = self.disambiguation_layer(unmasked_seqs)
             qd = qd.view(-1, self.max_senses)
-            #qd = torch.reshape(qd, (-1, self.max_senses))
-            #qd = torch.nn.functional.embedding(target_positions, qd)
             qd = qd[target_positions]
         else:
             pass
-            #self.disambiguated_reps = self.get_single_sense_embeddings(
-            #        self.masked_seqs)
        
         output_reps = self.prediction_layer(disambiguated_reps)
-    
         flattened_reps = output_reps.view(-1, self.embedding_size) 
-        #flattened_reps = torch.reshape(self.output_reps, [-1, self.embedding_size])
-        target_reps = flattened_reps[target_positions] 
+        target_reps = flattened_reps[target_positions] # (n_targets, embedding_size)
 
-        #target_reps = torch.nn.functional.embedding(self.target_positions, flattened_reps)
-
-        target_position_scores = torch.matmul(target_reps, self.embeddings.weight.transpose(0, 1)) # + self.biases.unsqueeze(0)
+        target_position_scores = torch.matmul(target_reps, self.embeddings.weight.transpose(0, 1)) + self.biases_with_dummy.unsqueeze(0) - 1e30 * self.unpredictable_tokens.unsqueeze(0)
+                
+        # (n_targets, total_senses)
 
         #target_position_scores = (
         #    torch.matmul(self.target_reps, self.embeddings.t()) 
@@ -240,75 +260,15 @@ class PolyLMModel(torch.nn.Module):
 
         return total_loss, lm_loss, d_loss, m_loss
 
-                
-
-        # self.embedding_initializer = torch.nn.Embedding(self.total_senses, self.embedding_size)
-        
-        # bias_zeros = np.zeros(self.total_senses - 1)
-        # dummy = np.concatenate([-1e30], bias_zeros) 
-        # self.biases = torch.tensor(dummy)
+    #def train_model(self, corpus):
+    #    for batch_num, batch_data in enumerate(corpus):
+    #        self.optimizer.zero_grad()
+    #        loss = self.forward(batch_data)
+    #        loss.backward()
+    #        self.optimizer.step()
+    #        self.scheduler.step()
+    #        print(f'Batch {batch_num}, Loss {loss.item()}')
     
-        # self.sense_weight_logits = np.zeros_like(sense_mask)
-        
-        
-        
-        #mean_prob = sense_mask / np.sum(sense_mask, axis=1, keepdims=True)
-
-        #mean_qp = torch.tensor(mean_prob)
-        #self.mean_qp = torch.reshape(
-        #    mean_qp,
-        #    (self.vocab.size, self.max_senses), 
-        #)
-
-        #mean_qd = torch.tensor(mean_prob)
-        #self.mean_qd = torch.reshape(
-        #    mean_qd, 
-        #    (self.vocab.size, self.max_senses), 
-        #)
-        
-        #self.update_mean_qp = self.update_smoothed_mean(
-        #        self.mean_qp, qp,
-        #        indices=torch.unsqueeze(self.targets, 1)
-        #)
-
-        #self.loss = self.lm_loss + self.d_loss + self.m_loss
-        #self.add_find_neighbours()
-        #self.add_get_mean_q()
-
-        #self.learning_rate = options.learning_rate
-        #self.opt = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
-
-
-    #def forward(self, input_ids, attention_mask=None, token_type_ids=None):
-    #    outputs = self.disambiguation_bert(input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids)
-    #    sequence_output = outputs.last_hidden_state
-    #    logits = torch.matmul(sequence_output, self.embeddings.t()) + self.biases_with_dummy
-    #    return logits
-
-    def train_model(self, corpus):
-        for batch_num, batch_data in enumerate(corpus):
-            self.optimizer.zero_grad()
-            loss = self.forward(batch_data)
-            loss.backward()
-            self.optimizer.step()
-            self.scheduler.step()
-            print(f'Batch {batch_num}, Loss {loss.item()}')
-    
-    
-    #def forward(self, input_ids, attention_mask=None, token_type_ids=None):
-    #    outputs = self.disambiguation_bert(input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids)
-    #    sequence_output = outputs.last_hidden_state
-    #    logits = torch.matmul(sequence_output, self.embeddings.t()) + self.biases_with_dummy
-    #    return logits
-
-    def train_model(self, corpus):
-        for batch_num, batch_data in enumerate(corpus):
-            self.optimizer.zero_grad()
-            loss = self.forward(batch_data)
-            loss.backward()
-            self.optimizer.step()
-            self.scheduler.step()
-            print(f'Batch {batch_num}, Loss {loss.item()}')
     
     def setup_sense_indices(self, n_senses, total_senses):
         sense_indices = np.zeros((self.vocab.size, self.max_senses), dtype=np.int32)
@@ -368,48 +328,53 @@ class PolyLMModel(torch.nn.Module):
         return sense_probs
     
     def disambiguation_layer(self, seqs):
-        #attention_mask = (1 - self.padding).unsqueeze(1).unsqueeze(2)
-        #attention_mask = attention_mask.to(dtype=torch.float32)
-        #attention_mask = (1.0 - attention_mask) * -10000.0 
-
         word_embeddings = self.make_word_embeddings(seqs)
-        word_embeddings = tf.convert_to_tensor(word_embeddings.detach().numpy())
-        padding = tf.convert_to_tensor(self.padding.detach().numpy())
-
-        model = BertModel(
-            config=self.disambiguation_bert_config,
-            is_training=self.training,
-            input_embeddings=word_embeddings,
-            input_mask=padding,
-        )
-
-        #print(self.options.batch_size)
-        #print(word_embeddings.shape)
-        #print(attention_mask.shape)
         
-        #reps = self.disambiguation_bert(word_embeddings, attention_mask)
+
+        if is_tf:
+            word_embeddings = tf.convert_to_tensor(word_embeddings.detach().numpy())
+            padding = tf.convert_to_tensor(self.padding)
+            #padding = tf.convert_to_tensor(self.padding.detach().numpy())
         
-        reps = model.get_output()
-        reps = torch.from_numpy(reps.numpy())
+            model = BertModel(
+                config=self.disambiguation_bert_config,
+                is_training=self.training,
+                input_embeddings=word_embeddings,
+                input_mask=padding,
+            )
+            reps = model.get_output()
+            reps = torch.from_numpy(reps.numpy())
+        
+        else:
+            #attention_mask = (1 - self.padding).unsqueeze(1).unsqueeze(2)
+            #attention_mask = attention_mask.to(dtype=torch.float32)
+            #attention_mask = (1.0 - attention_mask) * -10000.0 
+
+            disambiguation_bert = BertModel(self.disambiguation_bert_config)
+            reps = disambiguation_bert(word_embeddings, padding)
 
         sense_probs = self.calculate_sense_probs(seqs, reps)
         disambiguated_reps = self.make_word_embeddings(seqs, sense_weights=sense_probs)
-        
+    
         return disambiguated_reps, sense_probs
 
     def prediction_layer(self, reps):
-        reps = tf.convert_to_tensor(reps.detach().numpy())
-        padding = tf.convert_to_tensor(self.padding.detach().numpy())
-
-        model = BertModel(
-            config=self.prediction_bert_config,
-            is_training=self.training,
-            input_embeddings=reps,
-            input_mask=padding,
-        )
-        
-        reps = model.get_output()
-        reps = torch.from_numpy(reps.numpy())
+        if is_tf:
+            reps = tf.convert_to_tensor(reps.detach().numpy())
+            padding = tf.convert_to_tensor(self.padding)
+            #padding = tf.convert_to_tensor(self.padding.detach().numpy())
+            
+            model = BertModel(
+                config=self.prediction_bert_config,
+                is_training=self.training,
+                input_embeddings=reps,
+                input_mask=padding,
+            )
+            reps = model.get_output()
+            reps = torch.from_numpy(reps.numpy())
+        else: 
+            prediction_bert = BertModel(self.prediction_bert_config)
+            reps = prediction_bert(reps, padding)
 
         return reps
             
@@ -652,9 +617,10 @@ class PolyLM(torch.nn.Module):
                 masked_seqs = torch.tensor(batch.masked_seqs, dtype=torch.long, device=self.device)
                 target_positions = torch.tensor(batch.target_positions, dtype=torch.long, device=self.device)
                 targets = torch.tensor(batch.targets, dtype=torch.long, device=self.device)
-                padding = np.zeros(batch.unmasked_seqs.shape, dtype=np.int32)
-                #for i, l in enumerate(self.max_seq_len):
-                #    padding[i, :l] = 1
+                
+                padding = np.zeros(unmasked_seqs.shape, dtype=np.int32)
+                for i, l in enumerate(batch.seq_len):
+                    padding[i, :l] = 1
             
                 # Forward pass
                 optimizer.zero_grad()
