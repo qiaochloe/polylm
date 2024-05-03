@@ -121,7 +121,7 @@ class Vocabulary(object):
             .
             token_n n_occurrences_n"""
         logging.info('Loading vocab from %s...' % path)
-        with open(path, 'r') as f:
+        with open(path, 'r', encoding="utf-8") as f:
             ns = f.readline().strip().split()
             self._n_unique_tokens = int(ns[0])
             self.n_tokens = int(ns[1])
