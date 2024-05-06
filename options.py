@@ -38,7 +38,7 @@ class Options:
         # Display parameters
         self.test_words = ""
         self.print_every = 100
-        self.save_every = 10000
+        self.save_every = 500
         self.test_every = 500
         self.keep = 1
         

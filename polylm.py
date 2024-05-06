@@ -552,6 +552,11 @@ class PolyLM(torch.nn.Module):
                 else:
                     print("No batches processed.")
 
+            #saving:
+                if (batch_count % options.save_every == 0):
+                    print(model.state_dict())
+                    torch.save(model.state_dict(), 'models/save_number' + str(batch_count))
+
         print('Finished Training')
 
     def save_model(self, path):
