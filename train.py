@@ -1,4 +1,5 @@
 import polylm
+import logging
 from data import Vocabulary
 from data import Corpus
 from options import Options
