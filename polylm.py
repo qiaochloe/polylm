@@ -124,15 +124,7 @@ class PolyLMModel(torch.nn.Module):
         
         self.padding = padding
         check(torch.tensor(self.padding))
-        
-        # TODO: Need this for some reason
-        #self.embeddings = torch.nn.Embedding(
-        #    num_embeddings=self.total_senses, 
-        #    embedding_dim=self.embedding_size
-        #) 
-        
-        #self.embeddings.weight.data = torch.nn.init.normal_(torch.empty(self.total_senses, self.embedding_size))
-        
+                
         # LANGUAGE MODEL LOSS
         if self.options.use_disambiguation_layer:
             disambiguated_reps, _ = self.disambiguation_layer(masked_seqs)

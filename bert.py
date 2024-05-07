@@ -1,7 +1,6 @@
 import copy
 import json
 import math
-import numpy as np
 import six
 import torch
 import torch.nn as nn
@@ -71,58 +70,11 @@ class BertModel(nn.Module):
             dropout_prob=self.config.hidden_dropout_prob)
         
         # Get attention_mask 
-        # [batch_size, seq_length] -> [batch_size, seq_length, seq_length]
-        batch_size, from_seq_length, _ = input_embeddings.shape # torch.Size([64, 16, 128])
-        to_seq_length = input_mask.shape[1]
-        to_mask = torch.reshape(input_mask, [batch_size, 1, to_seq_length])
-        to_mask = to_mask.type(torch.float32)
-        broadcast_ones = torch.ones([batch_size, from_seq_length, 1])
-        attention_mask = broadcast_ones * to_mask
-        #attention_mask = attention_mask.unsqueeze(1)
-        
-        assert attention_mask.shape == (batch_size, to_seq_length, to_seq_length)
-        
-        # TODO: This seems more correct
         attention_mask = input_mask.unsqueeze(1).unsqueeze(2)
         attention_mask = attention_mask.to(dtype=torch.float32)
         attention_mask = (1.0 - attention_mask) * -10000.0
         encoder_outputs = self.encoder(embedding_output, attention_mask)
-        
-        #attention_layer = MultiHeadAttention(
-        #    num_attention_heads=self.config.num_attention_heads,
-        #    size_per_head = int(self.config.hidden_size / self.config.num_attention_heads),
-        #    # num_hidden_layers=self.config.num_hidden_layers  
-        #    #intermediate_size=self.config.intermediate_size,
-        #    #intermediate_act_fn=get_activation(self.config.hidden_act),
-        #    dropout_prob=self.config.hidden_dropout_prob,
-        #    #attention_probs_dropout_prob=self.config.attention_probs_dropout_prob,
-        #    initializer_range=self.config.initializer_range,
-        #    #do_return_all_layers=True
-        #    )
-        
-        sequence_output = encoder_outputs[-1]
         return encoder_outputs
-    
-        #pooled_output = self.pooler(sequence_output)
-        #return sequence_output, pooled_output
-
-        #output = attention_layer.forward(
-        #    from_tensor=embedding_output,
-        #    to_tensor=embedding_output, 
-        #    attention_mask=attention_mask
-        #)
-
-        encoder = TransformerEncoder(
-            d_model=self.config.hidden_size,
-            num_heads=self.config.num_attention_heads, 
-            num_layers=self.config.num_hidden_layers,
-            d_ff=self.config.hidden_size * 4,
-            dropout=self.config.hidden_dropout_prob)
-        
-        output = encoder(embedding_output, attention_mask)
-        #print(output.shape)  # (batch_size, seq_length, model_dim)
-
-        return output
 
 def embedding_postprocessor(input_tensor, 
                             use_position_embeddings=True,
@@ -154,30 +106,6 @@ def embedding_postprocessor(input_tensor,
     
     assert output.shape == input_tensor.shape
     return output
-
-#class BertEmbeddings(nn.Module):
-#    def __init__(self, config):
-#        super(BertEmbeddings, self).__init__()
-#        self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
-#        self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
-#        self.token_type_embeddings = nn.Embedding(2, config.hidden_size)
-
-#        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=1e-12)
-#        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-
-#    def forward(self, input_embeddings, token_type_ids):
-#        seq_length = input_embeddings.size(1)
-#        position_ids = torch.arange(seq_length, dtype=torch.long, device=input_embeddings.device)
-#        position_ids = position_ids.unsqueeze(0).expand_as(input_embeddings)
-
-#        words_embeddings = self.word_embeddings(input_embeddings)
-#        position_embeddings = self.position_embeddings(position_ids)
-#        token_type_embeddings = self.token_type_embeddings(token_type_ids)
-
-#        embeddings = words_embeddings + position_embeddings + token_type_embeddings
-#        embeddings = self.LayerNorm(embeddings)
-#        embeddings = self.dropout(embeddings)
-#        return embeddings
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, num_heads, d_model, dropout=0.1):
@@ -255,75 +183,6 @@ class TransformerEncoder(nn.Module):
         for layer in self.layers:
             x = layer(x, mask)
         return self.norm(x)
-
-#class MultiHeadAttention(nn.Module):
-#    def __init__(self, num_attention_heads, size_per_head, dropout_prob=0.1, 
-#                 initializer_range=0.02, query_act=None, key_act=None, value_act=None):
-#        super().__init__()
-        
-#        self.num_attention_heads = num_attention_heads
-#        self.size_per_head = size_per_head
-#        self.dropout_prob = dropout_prob
-
-#        self.query = nn.Linear(num_attention_heads * size_per_head, num_attention_heads * size_per_head)
-#        self.key = nn.Linear(num_attention_heads * size_per_head, num_attention_heads * size_per_head)
-#        self.value = nn.Linear(num_attention_heads * size_per_head, num_attention_heads * size_per_head)
-
-#        self.dropout = nn.Dropout(dropout_prob)
-
-#        # Optional activation layers
-#        self.query_act = query_act
-#        self.key_act = key_act
-#        self.value_act = value_act
-
-#        # Initialize weights and biases for better performance
-#        self._init_weights(initializer_range)
-        
-#    def _init_weights(self, initializer_range):
-#        for m in self.modules():
-#            if isinstance(m, nn.Linear):
-#                nn.init.normal_(m.weight, mean=0.0, std=initializer_range)
-#                if m.bias is not None:
-#                    nn.init.zeros_(m.bias)
-
-#    def forward(self, from_tensor, to_tensor, attention_mask=None):
-#        batch_size, seq_length, width = from_tensor.size()
-
-#        def transpose_for_scores(tensor):
-#            new_tensor_shape = tensor.size()[:-1] + (self.num_attention_heads, self.size_per_head)
-#            tensor = tensor.view(*new_tensor_shape)
-#            return tensor.permute(0, 2, 1, 3)  # (batch_size, num_attention_heads, seq_length, size_per_head)
-
-#        query_layer = self.query(from_tensor)
-#        key_layer = self.key(to_tensor)
-#        value_layer = self.value(to_tensor)
-
-#        if self.query_act:
-#            query_layer = self.query_act(query_layer)
-#        if self.key_act:
-#            key_layer = self.key_act(key_layer)
-#        if self.value_act:
-#            value_layer = self.value_act(value_layer)
-
-#        query_layer = transpose_for_scores(query_layer)
-#        key_layer = transpose_for_scores(key_layer)
-#        value_layer = transpose_for_scores(value_layer)
-
-#        attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
-#        attention_scores = attention_scores / math.sqrt(self.size_per_head)
-
-#        if attention_mask is not None:
-#            attention_scores = attention_scores.masked_fill(attention_mask == 0, float('-inf'))
-
-#        attention_probs = F.softmax(attention_scores, dim=-1)
-#        attention_probs = self.dropout(attention_probs)
-
-#        context_layer = torch.matmul(attention_probs, value_layer)
-#        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
-#        context_layer = context_layer.view(batch_size, seq_length, -1)
-
-#        return context_layer
-
 class BertEncoder(nn.Module):
     def __init__(self, config):
         super(BertEncoder, self).__init__()
@@ -437,40 +296,3 @@ class BertOutput(nn.Module):
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
-    
-
-#def get_activation(activation_string):
-#  """Maps a string to a Python function, e.g., "relu" => `tf.nn.relu`.
-
-#  Args:
-#    activation_string: String name of the activation function.
-
-#  Returns:
-#    A Python function corresponding to the activation function. If
-#    `activation_string` is None, empty, or "linear", this will return None.
-#    If `activation_string` is not a string, it will return `activation_string`.
-
-#  Raises:
-#    ValueError: The `activation_string` does not correspond to a known
-#      activation.
-#  """
-
-#  # We assume that anything that"s not a string is already an activation
-#  # function, so we just return it.
-#  if not isinstance(activation_string, str):
-#    return activation_string
-
-#  if not activation_string:
-#    return None
-
-#  act = activation_string.lower()
-#  if act == "linear":
-#    return None
-#  elif act == "relu":
-#    return torch.nn.functional.relu
-#  elif act == "gelu":
-#    return torch.nn.functional.gelu
-#  elif act == "tanh":
-#    return torch.nn.functional.tanh
-#  else:
-#    raise ValueError("Unsupported activation: %s" % act)
