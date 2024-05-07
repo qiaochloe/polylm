@@ -1,20 +1,14 @@
-#import init
-import math
-import logging
-import os
-import sys
-import time
-
 import torch.nn
 import torch
 import numpy as np
 
-from tfbert import BertModel, BertConfig
-import util
+is_tf = False
 
-is_tf = True
 if is_tf:
     import tensorflow as tf
+    from tfbert import BertModel, BertConfig
+else:
+    from bert import BertModel, BertConfig
 
 # model = PolyLMModel(vocab, n_senses, options, training=True)
 # logits = model(input_ids, attention_mask, token_type_ids)
@@ -261,10 +255,16 @@ class PolyLMModel(torch.nn.Module):
         else:
             #attention_mask = (1 - self.padding).unsqueeze(1).unsqueeze(2)
             #attention_mask = attention_mask.to(dtype=torch.float32)
-            #attention_mask = (1.0 - attention_mask) * -10000.0 
-
-            disambiguation_bert = BertModel(self.disambiguation_bert_config)
-            reps = disambiguation_bert(word_embeddings, padding)
+            #attention_mask = (1.0 - attention_mask) * -10000.0
+            
+            padding = torch.tensor(self.padding)
+            model = BertModel(config=self.disambiguation_bert_config)
+            
+            reps = model.forward(
+                is_training=self.training, 
+                input_embeddings=word_embeddings, 
+                input_mask=padding
+            )
 
         # (batch_size, sentence_len, n_senses)
         sense_probs = self.calculate_sense_probs(seqs, reps) 
@@ -288,8 +288,14 @@ class PolyLMModel(torch.nn.Module):
             reps = model.get_output()
             reps = torch.from_numpy(reps.numpy())
         else: 
-            prediction_bert = BertModel(self.prediction_bert_config)
-            reps = prediction_bert(reps, padding)
+            padding = torch.tensor(self.padding)
+    
+            model = BertModel(self.prediction_bert_config)
+            reps = model.forward(
+                is_training=self.training, 
+                input_embeddings=word_embeddings, 
+                input_mask=padding
+            )
 
         return reps
             
