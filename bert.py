@@ -61,7 +61,7 @@ class BertModel(nn.Module):
         super(BertModel, self).__init__()
         #self.embeddings = BertEmbeddings(config)
         self.config = config        
-        self.encoder = BertEncoder(config)
+        #self.encoder = BertEncoder(config)
         self.pooler = BertPooler(config)
 
     def forward(self, is_training, input_embeddings, input_mask=None, token_type_ids=None):
@@ -89,8 +89,8 @@ class BertModel(nn.Module):
             max_position_embeddings=self.config.max_position_embeddings,
             dropout_prob=self.config.hidden_dropout_prob)
         
-        
-        # Get attention_mask
+        # Get attention_mask 
+        # [batch_size, seq_length] -> [batch_size, seq_length, seq_length]
         batch_size, from_seq_length, _ = input_embeddings.shape # torch.Size([64, 16, 128])
         to_seq_length = input_mask.shape[1]
         to_mask = torch.reshape(input_mask, [batch_size, 1, to_seq_length])
@@ -98,18 +98,97 @@ class BertModel(nn.Module):
         broadcast_ones = torch.ones([batch_size, from_seq_length, 1])
         attention_mask = broadcast_ones * to_mask
         
-        #attention_mask = input_mask.unsqueeze(1).unsqueeze(2)
-        #attention_mask = attention_mask.to(dtype=torch.float32)
-        #attention_mask = (1.0 - attention_mask) * -10000.0
+        assert attention_mask.shape == (batch_size, to_seq_length, to_seq_length)
         
-        encoder_outputs = self.encoder(embedding_output, attention_mask)
-        sequence_output = encoder_outputs[-1]
-        pooled_output = self.pooler(sequence_output)
-        return sequence_output, pooled_output
+        # TODO: This seems more correct
+        attention_mask = input_mask.unsqueeze(1).unsqueeze(2)
+        attention_mask = attention_mask.to(dtype=torch.float32)
+        attention_mask = (1.0 - attention_mask) * -10000.0
+        #encoder_outputs = self.encoder(embedding_output, attention_mask)
+        
+        #attention_layer = MultiHeadAttention(num_attention_heads, size_per_head)
+        #output = attention_layer(embedding_output, attention_mask)
 
-# TODO: replace with torch gelu?
-def gelu(x):
-    return x * 0.5 * (1.0 + torch.erf(x / math.sqrt(2.0)))
+        #num_attention_heads = 4
+        #size_per_head = 128
+        #attention_layer = MultiHeadAttention(num_attention_heads, size_per_head)
+
+        #from_tensor = torch.rand(10, 20, num_attention_heads * size_per_head)  # (batch_size, seq_length, width)
+        #to_tensor = torch.rand(10, 20, num_attention_heads * size_per_head)
+        #attention_mask = torch.randint(0, 2, (10, 20, 20))
+
+        #output = attention_layer(from_tensor, to_tensor, attention_mask=attention_mask != 0)
+        #print(output.shape)  # Expected output shape: (batch_size, from_seq_length, num_attention_heads * size_per_head)
+        
+        #attention_layer = MultiHeadAttention(
+        #    num_attention_heads=self.config.num_attention_heads,
+        #    size_per_head = int(self.config.hidden_size / self.config.num_attention_heads),
+        #    # num_hidden_layers=self.config.num_hidden_layers  
+        #    #intermediate_size=self.config.intermediate_size,
+        #    #intermediate_act_fn=get_activation(self.config.hidden_act),
+        #    dropout_prob=self.config.hidden_dropout_prob,
+        #    #attention_probs_dropout_prob=self.config.attention_probs_dropout_prob,
+        #    initializer_range=self.config.initializer_range,
+        #    #do_return_all_layers=True
+        #    )
+        
+        ##sequence_output = encoder_outputs[-1]
+        #pooled_output = self.pooler(sequence_output)
+        #return sequence_output, pooled_output
+
+        #output = attention_layer.forward(
+        #    from_tensor=embedding_output,
+        #    to_tensor=embedding_output, 
+        #    attention_mask=attention_mask
+        #)
+
+        encoder = TransformerEncoder(
+            d_model=self.config.hidden_size,
+            num_heads=self.config.num_attention_heads, 
+            num_layers=self.config.num_hidden_layers,
+            d_ff=self.config.hidden_size * 4,
+            dropout=self.config.hidden_dropout_prob)
+        
+        output = encoder(embedding_output, attention_mask)
+        #print(output.shape)  # (batch_size, seq_length, model_dim)
+
+        return output
+
+def get_activation(activation_string):
+  """Maps a string to a Python function, e.g., "relu" => `tf.nn.relu`.
+
+  Args:
+    activation_string: String name of the activation function.
+
+  Returns:
+    A Python function corresponding to the activation function. If
+    `activation_string` is None, empty, or "linear", this will return None.
+    If `activation_string` is not a string, it will return `activation_string`.
+
+  Raises:
+    ValueError: The `activation_string` does not correspond to a known
+      activation.
+  """
+
+  # We assume that anything that"s not a string is already an activation
+  # function, so we just return it.
+  if not isinstance(activation_string, str):
+    return activation_string
+
+  if not activation_string:
+    return None
+
+  act = activation_string.lower()
+  if act == "linear":
+    return None
+  elif act == "relu":
+    return torch.nn.functional.relu
+  elif act == "gelu":
+    return torch.nn.functional.gelu
+  elif act == "tanh":
+    return torch.nn.functional.tanh
+  else:
+    raise ValueError("Unsupported activation: %s" % act)
 
 def embedding_postprocessor(input_tensor, 
                             use_token_type=False,
@@ -159,6 +238,86 @@ def embedding_postprocessor(input_tensor,
     
     return output
 
+class MultiHeadAttention(nn.Module):
+    def __init__(self, num_heads, d_model, dropout=0.1):
+        super().__init__()
+        assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
+        self.d_k = d_model // num_heads
+        self.num_heads = num_heads
+
+        self.query = nn.Linear(d_model, d_model)
+        self.key = nn.Linear(d_model, d_model)
+        self.value = nn.Linear(d_model, d_model)
+
+        self.dropout = nn.Dropout(dropout)
+        
+        self.linears = nn.ModuleList([self.query, self.key, self.value])
+
+        # Initialize weights
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        for linear in self.linears:
+            linear.weight.data.normal_(mean=0.0, std=0.02)
+
+    def forward(self, q, k, v, mask=None):
+        batch_size = q.size(0)
+
+        q, k, v = [l(x).view(batch_size, -1, self.num_heads, self.d_k).transpose(1, 2)
+                   for l, x in zip(self.linears, (q, k, v))]
+
+        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
+        if mask is not None:
+            #mask = mask.unsqueeze(1)
+            #print("Scores shape:", scores.shape)
+            #print("Mask shape:", mask.shape)
+
+            scores = scores.masked_fill(mask == 0, -1e9)
+        
+        p_attn = torch.nn.functional.softmax(scores, dim=-1)
+        p_attn = self.dropout(p_attn)
+        x = torch.matmul(p_attn, v).transpose(1, 2).contiguous()
+        x = x.view(batch_size, -1, self.num_heads * self.d_k)
+
+        return x
+
+class PositionwiseFeedForward(nn.Module):
+    def __init__(self, d_model, d_ff, dropout=0.1):
+        super().__init__()
+        self.linear1 = nn.Linear(d_model, d_ff)
+        self.dropout = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(d_ff, d_model)
+
+    def forward(self, x):
+        return self.linear2(self.dropout(torch.nn.functional.relu(self.linear1(x))))
+
+class EncoderLayer(nn.Module):
+    def __init__(self, d_model, num_heads, d_ff, dropout):
+        super().__init__()
+        self.self_attn = MultiHeadAttention(num_heads, d_model, dropout)
+        self.feed_forward = PositionwiseFeedForward(d_model, d_ff, dropout)
+        self.layernorm1 = nn.LayerNorm(d_model)
+        self.layernorm2 = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, mask):
+        x2 = self.layernorm1(x)
+        x = x + self.self_attn(x2, x2, x2, mask)
+        x2 = self.layernorm2(x)
+        x = x + self.feed_forward(x2)
+        return x
+
+class TransformerEncoder(nn.Module):
+    def __init__(self, d_model, num_heads, num_layers, d_ff, dropout):
+        super().__init__()
+        self.layers = nn.ModuleList([EncoderLayer(d_model, num_heads, d_ff, dropout) for _ in range(num_layers)])
+        self.norm = nn.LayerNorm(d_model)
+
+    def forward(self, x, mask):
+        for layer in self.layers:
+            x = layer(x, mask)
+        return self.norm(x)
+    
 #class BertEmbeddings(nn.Module):
 #    def __init__(self, config):
 #        super(BertEmbeddings, self).__init__()
@@ -182,6 +341,74 @@ def embedding_postprocessor(input_tensor,
 #        embeddings = self.LayerNorm(embeddings)
 #        embeddings = self.dropout(embeddings)
 #        return embeddings
+
+#class MultiHeadAttention(nn.Module):
+#    def __init__(self, num_attention_heads, size_per_head, dropout_prob=0.1, 
+#                 initializer_range=0.02, query_act=None, key_act=None, value_act=None):
+#        super().__init__()
+        
+#        self.num_attention_heads = num_attention_heads
+#        self.size_per_head = size_per_head
+#        self.dropout_prob = dropout_prob
+
+#        self.query = nn.Linear(num_attention_heads * size_per_head, num_attention_heads * size_per_head)
+#        self.key = nn.Linear(num_attention_heads * size_per_head, num_attention_heads * size_per_head)
+#        self.value = nn.Linear(num_attention_heads * size_per_head, num_attention_heads * size_per_head)
+
+#        self.dropout = nn.Dropout(dropout_prob)
+
+#        # Optional activation layers
+#        self.query_act = query_act
+#        self.key_act = key_act
+#        self.value_act = value_act
+
+#        # Initialize weights and biases for better performance
+#        self._init_weights(initializer_range)
+        
+#    def _init_weights(self, initializer_range):
+#        for m in self.modules():
+#            if isinstance(m, nn.Linear):
+#                nn.init.normal_(m.weight, mean=0.0, std=initializer_range)
+#                if m.bias is not None:
+#                    nn.init.zeros_(m.bias)
+
+#    def forward(self, from_tensor, to_tensor, attention_mask=None):
+#        batch_size, seq_length, width = from_tensor.size()
+
+#        def transpose_for_scores(tensor):
+#            new_tensor_shape = tensor.size()[:-1] + (self.num_attention_heads, self.size_per_head)
+#            tensor = tensor.view(*new_tensor_shape)
+#            return tensor.permute(0, 2, 1, 3)  # (batch_size, num_attention_heads, seq_length, size_per_head)
+
+#        query_layer = self.query(from_tensor)
+#        key_layer = self.key(to_tensor)
+#        value_layer = self.value(to_tensor)
+
+#        if self.query_act:
+#            query_layer = self.query_act(query_layer)
+#        if self.key_act:
+#            key_layer = self.key_act(key_layer)
+#        if self.value_act:
+#            value_layer = self.value_act(value_layer)
+
+#        query_layer = transpose_for_scores(query_layer)
+#        key_layer = transpose_for_scores(key_layer)
+#        value_layer = transpose_for_scores(value_layer)
+
+#        attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
+#        attention_scores = attention_scores / math.sqrt(self.size_per_head)
+
+#        if attention_mask is not None:
+#            attention_scores = attention_scores.masked_fill(attention_mask == 0, float('-inf'))
+
+#        attention_probs = F.softmax(attention_scores, dim=-1)
+#        attention_probs = self.dropout(attention_probs)
+
+#        context_layer = torch.matmul(attention_probs, value_layer)
+#        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
+#        context_layer = context_layer.view(batch_size, seq_length, -1)
+
+#        return context_layer
 
 class BertEncoder(nn.Module):
     def __init__(self, config):
@@ -305,7 +532,7 @@ class BertPooler(nn.Module):
 
     def forward(self, hidden_states):
         # batch_size, sequence_length, hidden_size
-        print("Shape of hidden_states before pooling:", hidden_states.shape)
+        #print("Shape of hidden_states before pooling:", hidden_states.shape)
         first_token_tensor = hidden_states    
         pooled_output = self.dense(first_token_tensor)
         pooled_output = self.activation(pooled_output)
