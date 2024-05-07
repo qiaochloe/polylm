@@ -5,10 +5,6 @@ import math
 import copy
 import json
 
-# TODO
-# Add comments to the functions
-# Indicate which tf segment the functions refer to
-
 class BertConfig(object):
     def __init__(self, 
                  hidden_size=768, 
@@ -54,28 +50,16 @@ class BertConfig(object):
         return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
 class BertModel(nn.Module):
-    # TODO: check if necessary to add is_training, input_embeddings, and input_mask
-    # parameters to the model init
-    
     def __init__(self, config):
         super(BertModel, self).__init__()
         #self.embeddings = BertEmbeddings(config)
         self.config = config        
         #self.encoder = BertEncoder(config)
-        self.pooler = BertPooler(config)
 
-    def forward(self, is_training, input_embeddings, input_mask=None, token_type_ids=None):
-        # TODO: DON'T KNOW WHAT'S GOING ON HERE
-        #if input_mask is None:
-        #    input_mask = torch.ones_like(input_embeddings)
+    def forward(self, is_training, input_embeddings, input_mask=None):
+        if input_mask is None:
+            input_mask = torch.ones_like(input_embeddings)
 
-        #if token_type_ids is None:
-        #    token_type_ids = torch.zeros_like(input_embeddings)
-
-        # START HERE 
-        # EMBEDDING_POSTPROCESSOR
-        #embedding_output = self.embeddings(input_embeddings, token_type_ids)
-        
         if not is_training:
             config.hidden_dropout_prob = 0.0
             config.attention_probs_dropout_prob = 0.0
@@ -191,29 +175,13 @@ def get_activation(activation_string):
     raise ValueError("Unsupported activation: %s" % act)
 
 def embedding_postprocessor(input_tensor, 
-                            use_token_type=False,
-                            token_type_ids=None, 
-                            token_type_vocab_size=16,
-                            #token_type_embedding_name="token_type_embeddings",
                             use_position_embeddings=True,
-                            #position_embedding_name="position_embeddings",
                             initializer_range=0.02, 
                             max_position_embeddings=512, 
                             dropout_prob=0.1):
 
     batch_size, seq_length, width = input_tensor.size()
     output = input_tensor
-
-    if use_token_type:
-        if token_type_ids is None:
-            raise ValueError("`token_type_ids` must be specified if `use_token_type` is True.")
-        
-        token_type_embeddings = nn.Embedding(token_type_vocab_size, width)
-        token_type_embeddings.weight.data.normal_(mean=0.0, std=initializer_range)
-        token_type_embeddings = token_type_embeddings(token_type_ids)
-        token_type_embeddings = torch.reshape(token_type_embeddings, [batch_size, seq_length, width])
-        
-        output += token_type_embeddings
 
     if use_position_embeddings:
         if seq_length > max_position_embeddings:
@@ -235,7 +203,6 @@ def embedding_postprocessor(input_tensor,
         output = torch.nn.functional.dropout(output, p=dropout_prob)
     
     assert output.shape == input_tensor.shape
-    
     return output
 
 class MultiHeadAttention(nn.Module):
@@ -317,7 +284,7 @@ class TransformerEncoder(nn.Module):
         for layer in self.layers:
             x = layer(x, mask)
         return self.norm(x)
-    
+
 #class BertEmbeddings(nn.Module):
 #    def __init__(self, config):
 #        super(BertEmbeddings, self).__init__()
@@ -523,17 +490,3 @@ class BertOutput(nn.Module):
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
-
-class BertPooler(nn.Module):
-    def __init__(self, config):
-        super(BertPooler, self).__init__()
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
-        self.activation = nn.Tanh()
-
-    def forward(self, hidden_states):
-        # batch_size, sequence_length, hidden_size
-        #print("Shape of hidden_states before pooling:", hidden_states.shape)
-        first_token_tensor = hidden_states    
-        pooled_output = self.dense(first_token_tensor)
-        pooled_output = self.activation(pooled_output)
-        return pooled_output
