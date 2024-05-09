@@ -11,10 +11,6 @@ if is_tf:
 else:
     from bert import BertModel, BertConfig
 
-def masked_softmax(logits, mask):
-    masked_logits = logits - 1e30 * (1.0 - mask)
-    return torch.nn.functional.softmax(masked_logits, dim=-1)
-
 def check(*args):
     for tensor in args:
         not_nan(tensor)
@@ -22,6 +18,9 @@ def check(*args):
 def not_nan(tensor):
     assert not torch.isnan(tensor).any(), "Tensor contains NaNs!"
 
+def masked_softmax(logits, mask):
+    masked_logits = logits - 1e30 * (1.0 - mask)
+    return torch.nn.functional.softmax(masked_logits, dim=-1)
 
 class PolyLMModel(torch.nn.Module):
     def __init__(self, vocab, n_senses, options, training=False):
@@ -35,6 +34,7 @@ class PolyLMModel(torch.nn.Module):
         self.max_senses = options.max_senses_per_word
         self.training = training
         self.has_disambiguation_layer = (options.use_disambiguation_layer and self.max_senses > 1)
+        self.options = options
         
         # Set up BERT
         self.disambiguation_bert_config = BertConfig(
@@ -184,6 +184,26 @@ class PolyLMModel(torch.nn.Module):
         total_loss = lm_loss + d_loss + m_loss
         assert not torch.isnan(total_loss).any(), "Tensor contains NaNs!"
         return total_loss
+    
+    def run_forward(self, unmasked_seqs, masked_seqs, padding, target_positions, targets, dl_r, ml_coeff):
+        # Safety assertions
+        check(unmasked_seqs, masked_seqs, target_positions, targets)
+        check(self.biases, self.sense_weight_logits, self.embeddings.weight)
+        
+        self.padding = padding
+        check(torch.tensor(self.padding))
+                
+        # LANGUAGE MODEL LOSS
+        if self.options.use_disambiguation_layer:
+            disambiguated_reps, _ = self.disambiguation_layer(masked_seqs)
+            _, qd = self.disambiguation_layer(unmasked_seqs)
+            qd = qd.view(-1, self.max_senses)
+            qd = qd[target_positions]
+        else:
+            pass
+       
+        output_reps = self.prediction_layer(disambiguated_reps)
+        return output_reps
             
     def get_sense_embeddings(self, tokens):
         sense_indices = self.sense_indices[tokens]
@@ -235,6 +255,26 @@ class PolyLMModel(torch.nn.Module):
         return sense_probs
     
     def disambiguation_layer(self, seqs):
+        self.disambiguation_bert_config = BertConfig(
+            hidden_size=self.embedding_size,
+            num_hidden_layers=self.options.n_disambiguation_layers,
+            intermediate_size=self.options.bert_intermediate_size,
+            num_attention_heads=self.options.n_attention_heads,
+            hidden_dropout_prob=self.options.dropout,
+            attention_probs_dropout_prob=self.options.dropout,
+            max_position_embeddings=self.max_seq_len,
+        )
+
+        self.prediction_bert_config = BertConfig(
+            hidden_size=self.embedding_size,
+            num_hidden_layers=self.options.n_prediction_layers,
+            intermediate_size=self.options.bert_intermediate_size,
+            num_attention_heads=self.options.n_attention_heads,
+            hidden_dropout_prob=self.options.dropout,
+            attention_probs_dropout_prob=self.options.dropout,
+            max_position_embeddings=self.max_seq_len,
+        )
+    
         word_embeddings = self.make_word_embeddings(seqs)
         
         # Checks
@@ -294,12 +334,37 @@ class PolyLMModel(torch.nn.Module):
             )
         
         return reps
+    
+    def disambiguate(self, batch, method='prediction'):  
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.to(self.device)
+
+        unmasked_seqs = torch.tensor(batch.unmasked_seqs, dtype=torch.long, device=self.device)
+        masked_seqs = torch.tensor(batch.masked_seqs, dtype=torch.long, device=self.device)
+        target_positions = torch.tensor(batch.target_positions, dtype=torch.long, device=self.device)
+        targets = torch.tensor(batch.targets, dtype=torch.long, device=self.device)
+                
+        padding = np.zeros(batch.unmasked_seqs.shape, dtype=np.int32)
+        for i, l in enumerate(batch.seq_len):
+            padding[i, :l] = 1
+                                    
+        dl_r = 0.5
+        ml_coeff = 0.1
+
+        # prob_tensors = {'prediction': self.qp}
+        # if self.has_disambiguation_layer:
+        #     prob_tensors['disambiguation'] = self.qd
+
+        return self.run_forward(unmasked_seqs, masked_seqs, padding, target_positions, targets, dl_r, ml_coeff)
             
     # NOTE: update_smoothed_mean is used in _update_mean_qd and _update_mean_qp
     # NOTE: contextualize, disambiguate, get_target_probs add_get_mean_q, get_mean_sense_probs, get_sense_embeddings not called
     # NOTE: removed add_find_neighbors, geet_neighbors
     # NOTE: deduplicated_indexed_slices, average_gradients, and clip_gradients are only needed for manual gradient descent
 
+    # def disambiguate(self, batch, method='prediction'):
+    #     return self.disambiguate(batch, method=method)
+    
 class PolyLM(torch.nn.Module):
     def __init__(self, vocab, options, multisense_vocab={}, training=False):
         super(PolyLM, self).__init__()
@@ -318,10 +383,12 @@ class PolyLM(torch.nn.Module):
             self.n_senses[t] = n
 
         ## Model setup across CPUs
-        self.models = torch.nn.ModuleList([
-            PolyLMModel(vocab, self.n_senses, options, training=training).to('cpu')
-            for _ in range(len(options.gpus.split(",")))  # Number of models to instantiate
-        ])
+        # self.models = torch.nn.ModuleList([
+        #     PolyLMModel(vocab, self.n_senses, options, training=training).to('cpu')
+        #     for _ in range(len(options.gpus.split(",")))  # Number of models to instantiate
+        # ])
+        model = PolyLMModel(self.vocab, self.n_senses, self.options, training=self.training)
+        self.model = model
 
         ## Model setup across GPUs
         #self.models = torch.nn.ModuleList([
@@ -334,9 +401,10 @@ class PolyLM(torch.nn.Module):
   
     def train_model(self, corpus, num_epochs):
         # Initialize model and optimizer
-        model = PolyLMModel(self.vocab, self.n_senses, self.options, training=self.training)
-        model.to(self.device)
-        options = model.options
+        #model = PolyLMModel(self.vocab, self.n_senses, self.options, training=self.training)
+        #self.model = model
+        self.model.to(self.device)
+        options = self.model.options
         optimizer = self.optimizer
         
         masking_policy = [float(x) for x in options.masking_policy.split()]
@@ -357,7 +425,7 @@ class PolyLM(torch.nn.Module):
                 if debug: print(f"Backward hook: NaNs in gradients of {module}")
                 
 
-        for module in model.modules():
+        for module in self.model.modules():
             module.register_forward_hook(forward_hook)
             module.register_backward_hook(backward_hook)
          
@@ -379,15 +447,15 @@ class PolyLM(torch.nn.Module):
                 optimizer.zero_grad()
                 dl_r = 0.5
                 ml_coeff = 0.1
-                total_loss = model(unmasked_seqs, masked_seqs, padding, target_positions, targets, dl_r, ml_coeff)
+                total_loss = self.model(unmasked_seqs, masked_seqs, padding, target_positions, targets, dl_r, ml_coeff)
                 
                 # Backward and optimize
                 total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 optimizer.step()
                                 
                 # Check for NaNs
-                for name, param in model.named_parameters():
+                for name, param in self.model.named_parameters():
                     if param.grad is not None and torch.isnan(param.grad).any():
                         if debug: print(f"NaNs in gradients of {name}")
                         
@@ -404,8 +472,8 @@ class PolyLM(torch.nn.Module):
 
                 # Saving:
                 if (batch_count % options.save_every == 0):
-                    print(model.state_dict())
-                    torch.save(model.state_dict(), 'models/save_number' + str(batch_count))
+                    print(self.model.state_dict())
+                    torch.save(self.model.state_dict(), 'models/save_number' + str(batch_count))
 
         print('Finished Training')
 
@@ -415,3 +483,6 @@ class PolyLM(torch.nn.Module):
     def load_model(self, path):
         self.load_state_dict(torch.load(path))
         self.eval()
+
+    def disambiguate(self, batch, method='prediction'):
+            return self.model.disambiguate(batch, method=method)

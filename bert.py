@@ -58,8 +58,8 @@ class BertModel(nn.Module):
         assert not torch.isnan(input_embeddings).any(), "Tensor contains NaNs!"
         
         if not is_training:
-            config.hidden_dropout_prob = 0.0
-            config.attention_probs_dropout_prob = 0.0
+            self.config.hidden_dropout_prob = 0.0
+            self.config.attention_probs_dropout_prob = 0.0
             
         # Get embedding_output
         embedding_output = embedding_postprocessor(

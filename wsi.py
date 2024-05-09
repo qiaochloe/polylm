@@ -1,4 +1,4 @@
-import init
+#import init
 import polylm
 import util
 from options import Options

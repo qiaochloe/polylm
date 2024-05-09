@@ -53,8 +53,8 @@ class Options:
         self.sense_prob_source = "prediction"
         
         # WSI
-        self.wsi_path = ""
-        self.wsi_format = ""
+        self.wsi_path = "data/wsi/SemEval-2010"
+        self.wsi_format = "SemEval-2010"
         self.wsi_2013_thresh = 0.2
         
         # WIC

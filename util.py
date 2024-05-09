@@ -5,13 +5,18 @@ import sys
 import logging
 
 import data
+import nltk
+#nltk.download('wordnet')
+from nltk.corpus import wordnet as wn
+
 
 from xml.etree import ElementTree
 from nltk.tokenize.stanford import StanfordTokenizer
 from nltk.tag.stanford import StanfordTagger
 from nltk.stem.wordnet import WordNetLemmatizer
 
-_POS_TAGGER_ROOT = '.'
+
+_POS_TAGGER_ROOT = './stanford-postagger-2018-10-16'
 
 np.set_printoptions(linewidth=np.inf)
 
@@ -274,12 +279,19 @@ class WsiCorpus(object):
             yield instances, make_batch(instances, self._vocab, max_seq_len)
 
     def calculate_sense_probs(
-            self, sess, model, max_batch_size, max_seq_length, method='prediction'):
+            self, model, max_batch_size, max_seq_length, method='prediction'):
         all_instances = []
         seen = set()
         for instances, batch in self._generate_batches(
                 max_batch_size, max_seq_length):
-            sense_probs = model.disambiguate(sess, batch, method=method)
+            sense_probs = model.disambiguate(batch, method=method)
+            print("dododododo")
+            print(sense_probs)
+
+            #the issue is that we have only losses and stuff
+            #and sess is some god function that returns what is give, 
+            #so. 
+
             for i, instance in enumerate(instances):
                 instance['sense_probs'] = sense_probs[i, :]
                 all_instances.append(instance)
@@ -468,7 +480,7 @@ def wsi(model, vocab, options):
         logging.error('Unrecognized WSI format: "%s"' % options.wsi_format)
         return
     instances = corpus.calculate_sense_probs(
-            model, options.batch_size, options.max_seq_len,
+            model = model, max_batch_size = options.batch_size, max_seq_length = options.max_seq_len,
             method=options.sense_prob_source)
     lemmas = {}
     for instance in instances:
@@ -495,7 +507,7 @@ def wsi(model, vocab, options):
             logging.info(to_sentence(vocab, instance['span'], instance['index_in_span']))
             logging.info('(%s)' % ('/'.join(['%.3f' % p for p in instance['sense_probs']])))
             print('%s.%s %s %s' % (lemma, pos, instance['name'], score_str))
-        model.display_words([lemma])
+        # model.display_words([lemma])
 
     if allow_multiple:
         n_senses_prob = n_senses_count / np.sum(n_senses_count)
