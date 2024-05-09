@@ -2,7 +2,7 @@
 
 ## Setting up repository
 
-1. Set up your virtual environment.
+1. Set up virtual environment.
    ```bash
    python3.10 -m venv .venv 
    ```
