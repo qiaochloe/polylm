@@ -70,7 +70,7 @@ It is possible to use the download scripts provided in the `models` folder.
     cd models
     ./download-lemmatized-large.sh
 
-First download the SemEval 2010 and 2013 WSI datasets:
+First download the SemEval 2010 WSI datasets:
 
     cd data
     ./download-wsi.sh
@@ -85,9 +85,6 @@ Download [Stanford CoreNLP's part-of-speech tagger v3.9.2](https://nlp.stanford.
 PolyLM evaluation can be performed as follows:
 
     ./wsi.sh data/wsi/SemEval-2010 SemEval-2010 ./models/polylm-lemmatized-large --gpus 0 --pos_tagger_root ./stanford-postagger-2018-10-16
-
-    ./wsi.sh data/wsi/SemEval-2013 SemEval-2013 ./models/polylm-lemmatized-large --gpus 0 --pos_tagger_root /stanford-postagger-2018-10-16/models/english-bidirectional-distsim.tagger
-
 
 Note that inference is only supported on a single GPU currently, but is generally very fast.
 
