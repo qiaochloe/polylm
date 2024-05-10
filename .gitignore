@@ -1,5 +1,6 @@
 env/
-__pycache__/
+__pycache__/**
 data/*.txt
 .DS_Store
 .venv
+.ipynb_checkpoints
