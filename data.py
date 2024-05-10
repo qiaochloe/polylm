@@ -121,7 +121,7 @@ class Vocabulary(object):
             .
             token_n n_occurrences_n"""
         logging.info('Loading vocab from %s...' % path)
-        with open(path, 'r') as f:
+        with open(path, 'r', encoding="utf-8") as f:
             ns = f.readline().strip().split()
             self._n_unique_tokens = int(ns[0])
             self.n_tokens = int(ns[1])
@@ -151,7 +151,7 @@ class Vocabulary(object):
         self._n_unique_tokens = 0
         self.n_tokens = 0
         
-        with open(path, 'r') as f:
+        with open(path, 'r', encoding="utf-8") as f:
             for line in f:
                 tokens = line.strip().split()
                 for tok in tokens:
@@ -281,7 +281,7 @@ class Corpus(object):
 
     def read_lines(self, max_seq_len):
         while True:
-            with open(self._path, 'r') as f:
+            with open(self._path, 'r', encoding="utf-8") as f:
                 for i, line in enumerate(f):
                     tokens = line.strip().split()
                     if len(tokens) > max_seq_len - 2 or len(line) == 0:

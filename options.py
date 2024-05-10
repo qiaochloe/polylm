@@ -1,7 +1,7 @@
 class Options:
     def __init__(self):
         # High-level options
-        self.gpus = "0"
+        self.gpus = "1"
         self.mode = "train"
         self.checkpoint_version = -1
         

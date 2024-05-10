@@ -3,6 +3,9 @@ from data import Vocabulary
 from data import Corpus
 from options import Options
 
+
+import csv
+
 def get_multisense_vocab(path, vocab, options):
     if path:
         n_senses = {}
@@ -39,4 +42,8 @@ if __name__ == "__main__":
     model = polylm.PolyLM(vocab, options, multisense_vocab, training=True)
     corpus = Corpus(options.corpus_path, vocab)
     
-    model.train_model(corpus, 1)
+    losses = model.train_model(corpus, 1)
+
+    with open('losses.csv', 'w') as f:
+        wr = csv.writer(f)
+        wr.writerow(losses)

@@ -11,6 +11,7 @@ import numpy as np
 
 from tfbert import BertModel, BertConfig
 import util
+import csv
 
 is_tf = True
 if is_tf:
@@ -467,7 +468,8 @@ class PolyLM(torch.nn.Module):
         self.embedding_size = options.embedding_size
         self.max_senses = options.max_senses_per_word
         self.training = training
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cpu")
+        self.losses = []
 
         # Initialize sense numbers
         self.n_senses = torch.ones(vocab.size, dtype=torch.int32)
@@ -501,6 +503,7 @@ class PolyLM(torch.nn.Module):
 
   
     def train_model(self, corpus, num_epochs):
+        loss = []
         # Initialize model and optimizer
         model = PolyLMModel(self.vocab, self.n_senses, self.options, training=self.training)
         model.to(self.device)
@@ -514,6 +517,7 @@ class PolyLM(torch.nn.Module):
             options.mask_prob,
             variable_length=True,
             masking_policy=masking_policy)
+
          
         # Training loop
 
@@ -548,7 +552,12 @@ class PolyLM(torch.nn.Module):
             # Logging
                 if batch_count > 0:
                     average_loss = total_loss / batch_count
-                    print(f'Epoch {epoch+1}/{num_epochs}, Loss: {average_loss:.4f}')
+                    print(f'Batch {batch_count}, Epoch {epoch+1}/{num_epochs}, Loss: {average_loss:.4f}')
+                    self.losses.append(average_loss)
+                    losses = [batch_count, average_loss.item()]
+                    with open('losses.csv', 'a') as f:
+                        wr = csv.writer(f, quoting=csv.QUOTE_ALL)
+                        wr.writerow(losses)
                 else:
                     print("No batches processed.")
 
